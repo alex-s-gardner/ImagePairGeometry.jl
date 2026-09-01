@@ -2,6 +2,8 @@ using ImagePairGeometry
 using Test
 using Aqua
 
+include("npz.jl")
+
 @testset "ImagePairGeometry.jl" begin
     @testset "Code quality (Aqua.jl)" begin
         Aqua.test_all(ImagePairGeometry)
@@ -11,4 +13,5 @@ using Aqua
     @time @testset "coregister" begin include("coregister.jl") end
     @time @testset "window" begin include("window.jl") end
     @time @testset "kernel" begin include("kernel.jl") end
+    @time @testset "geogrid vs reference" begin include("geogrid.jl") end
 end

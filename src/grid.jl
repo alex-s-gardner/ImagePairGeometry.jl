@@ -99,6 +99,11 @@ the outer boundary, matching the reference.
 
 Returns an `Extents.Extent{(:X, :Y)}`. The elevation range is not part of the result: it only
 widens the horizontal box.
+
+Given a [`TransformPair`](@ref) this takes the correct direction itself. Note that it is the
+pair's *inverse* — the kernel's forward direction is grid to image, and this needs image to grid —
+so passing `tf.forward` by hand computes a bounding box in the wrong space, which surfaces as a
+window far outside the grid.
 """
 function footprint_bounds(transform, c::ProjectedCoordinate; zrange = DEFAULT_ZRANGE)
     xs = (c.origin[1], c.origin[1] + (c.size[1] - 1) * c.spacing[1])
@@ -119,6 +124,10 @@ function footprint_bounds(transform, c::ProjectedCoordinate; zrange = DEFAULT_ZR
 
     return Extent(X = (xmin, xmax), Y = (ymin, ymax))
 end
+
+# Takes the image-to-grid direction from the pair, so the caller cannot pick the wrong one.
+footprint_bounds(tf::TransformPair, c::ProjectedCoordinate; zrange = DEFAULT_ZRANGE) =
+    footprint_bounds(tf.inverse, c; zrange)
 
 """
     grid_window(g::MapGrid, bounds::Extent) -> CartesianIndices{2}

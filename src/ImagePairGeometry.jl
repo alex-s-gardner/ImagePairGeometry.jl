@@ -33,15 +33,21 @@ export ImageFootprint, CoregisteredPair, coregister
 export ProjectedCoordinate, RadarCoordinate
 export MapGrid, footprint_bounds, grid_window
 export IdentityTransform, AffineTransform, TransformPair, transform_pair
+export NoDataPolicy, nodata_from
+export PairGeometry, GeometryInputs, GeometryParams, SearchRangeScaling
+export pairgeometry, npoints, nvalid
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
 include("coordinates.jl")
+include("transforms.jl")
 include("pair.jl")
 include("grid.jl")
-include("transforms.jl")
 include("kernel/searchrange.jl")
 include("kernel/geometry.jl")
 include("kernel/outputs.jl")
+include("nodata.jl")
+include("result.jl")
+include("driver.jl")
 
 end

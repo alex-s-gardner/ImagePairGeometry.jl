@@ -1,6 +1,8 @@
 [deps]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
+ImagePairGeometry = "7d3defa8-4bb6-45cf-b5d0-7628f127c0fd"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Proj = "c94c279d-25a6-4763-9509-64d165bea63e"

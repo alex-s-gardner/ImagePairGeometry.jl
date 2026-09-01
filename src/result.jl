@@ -1,0 +1,156 @@
+# The result: one array per reference output band.
+#
+# Named after the reference's nine files and their bands, so writing them out and comparing them
+# against the reference are both one-liners, and so a transposed pair is a compile error rather
+# than a silent axis swap.
+#
+# Struct of arrays rather than an array of structs: every consumer wants a whole band at once — the
+# GeoTIFF writer, the bitwise comparison, the correlator that takes the grid as two matrices.
+#
+# `Int32` where the reference writes `GDT_Int32`, because that is what bit-exactness is asserted
+# against; widening to `Int` would put the `-32767` sentinel in two representations.
+
+"""
+    PairGeometry
+
+Per-grid-point geometry of an image pair, one array per output quantity.
+
+All arrays share the axes of the grid window the result was computed over.
+
+# Integer fields, sentinel `-32767`
+- `location_x`, `location_y`: zero-based pixel index of the grid point in the image.
+- `offset_x`, `offset_y`: expected displacement in pixels, from the reference velocity field.
+- `search_x`, `search_y`: search half-extent in pixels.
+- `chip_min_x`, `chip_min_y`, `chip_max_x`, `chip_max_y`: chip size bounds in pixels.
+- `stable_surface`: stable-surface mask.
+
+# Float fields, sentinel `-32767.0`
+- `off2vx_dx`, `off2vx_dy`, `off2vy_dx`, `off2vy_dy`: the operator converting a pixel displacement
+  to a map velocity. Displacement `(dx, dy)` gives `vx = off2vx_dx * dx + off2vx_dy * dy` and
+  likewise for `vy`, after scaling the displacement by the scale factors.
+- `scale_x`, `scale_y`: ratio of true ground distance to nominal pixel spacing.
+
+# Metadata
+- `geotransform`, `crs`: georeferencing of the window.
+- `window`: the grid indices covered.
+- `nodata`: the policy the sentinels come from.
+
+Field names map to the reference's files as `location` → `window_location.tif`, `offset` →
+`window_offset.tif`, `search` → `window_search_range.tif`, `chip_min`/`chip_max` →
+`window_chip_size_min.tif`/`_max.tif`, `stable_surface` →
+`window_stable_surface_mask.tif`, `off2vx`/`off2vy` → `window_rdr_off2vel_x_vec.tif`/`_y_vec.tif`,
+`scale` → `window_scale_factor.tif`.
+"""
+struct PairGeometry{I<:AbstractMatrix{Int32},F<:AbstractMatrix{Float64},C}
+    location_x::I
+    location_y::I
+    offset_x::I
+    offset_y::I
+    search_x::I
+    search_y::I
+    chip_min_x::I
+    chip_min_y::I
+    chip_max_x::I
+    chip_max_y::I
+    stable_surface::I
+
+    off2vx_dx::F
+    off2vx_dy::F
+    off2vy_dx::F
+    off2vy_dy::F
+    scale_x::F
+    scale_y::F
+
+    geotransform::NTuple{6,Float64}
+    crs::C
+    window::CartesianIndices{2}
+    nodata::NoDataPolicy
+end
+
+"""
+    INT_BANDS
+
+Names of the `Int32` fields of [`PairGeometry`](@ref), in the reference's band order.
+"""
+const INT_BANDS = (:location_x, :location_y, :offset_x, :offset_y, :search_x, :search_y,
+                   :chip_min_x, :chip_min_y, :chip_max_x, :chip_max_y, :stable_surface)
+
+"""
+    FLOAT_BANDS
+
+Names of the `Float64` fields of [`PairGeometry`](@ref), in the reference's band order.
+"""
+const FLOAT_BANDS = (:off2vx_dx, :off2vx_dy, :off2vy_dx, :off2vy_dy, :scale_x, :scale_y)
+
+"""
+    REFERENCE_FILES
+
+Each of the reference's nine output files, with the [`PairGeometry`](@ref) fields holding its
+bands in order.
+
+The basis for writing GeoTIFFs that a downstream reader consuming the reference's output can read
+unchanged, and for comparing band by band against it.
+"""
+const REFERENCE_FILES = (
+    "window_location.tif" => (:location_x, :location_y),
+    "window_offset.tif" => (:offset_x, :offset_y),
+    "window_search_range.tif" => (:search_x, :search_y),
+    "window_chip_size_min.tif" => (:chip_min_x, :chip_min_y),
+    "window_chip_size_max.tif" => (:chip_max_x, :chip_max_y),
+    "window_stable_surface_mask.tif" => (:stable_surface,),
+    "window_rdr_off2vel_x_vec.tif" => (:off2vx_dx, :off2vx_dy),
+    "window_rdr_off2vel_y_vec.tif" => (:off2vy_dx, :off2vy_dy),
+    "window_scale_factor.tif" => (:scale_x, :scale_y),
+)
+
+Base.size(r::PairGeometry) = size(r.location_x)
+Base.axes(r::PairGeometry) = axes(r.location_x)
+Base.eachindex(r::PairGeometry) = eachindex(r.location_x)
+
+"""
+    allocate_geometry(window, geotransform, crs, nodata) -> PairGeometry
+
+A [`PairGeometry`](@ref) sized to `window`, with every band filled with its sentinel.
+
+Prefilling means a band the inputs do not support — the reference writes no file at all in that
+case — is uniformly nodata rather than uninitialized, and a point skipped for being out of bounds
+needs no explicit write.
+"""
+function allocate_geometry(window::CartesianIndices{2}, geotransform::NTuple{6,Float64},
+                           crs, nodata::NoDataPolicy)
+    sz = size(window)
+    ints = ntuple(_ -> fill(Int32(nodata.output), sz), length(INT_BANDS))
+    floats = ntuple(_ -> fill(nodata.output, sz), length(FLOAT_BANDS))
+    return PairGeometry(ints..., floats..., geotransform, crs, window, nodata)
+end
+
+"""
+    npoints(r::PairGeometry) -> Int
+
+Number of grid points in the result, valid or not.
+"""
+npoints(r::PairGeometry) = length(r.location_x)
+
+"""
+    nvalid(r::PairGeometry) -> Int
+
+Number of grid points that mapped inside the image, i.e. whose location is not the sentinel.
+"""
+function nvalid(r::PairGeometry)
+    s = Int32(r.nodata.output)
+    n = 0
+    for i in eachindex(r.location_x)
+        @inbounds r.location_x[i] == s || (n += 1)
+    end
+    return n
+end
+
+function Base.show(io::IO, ::MIME"text/plain", r::PairGeometry)
+    nx, ny = size(r)
+    v = nvalid(r)
+    println(io, "PairGeometry: $(nx)x$(ny) grid points, $v valid ",
+            "($(round(100 * v / max(npoints(r), 1); digits = 1))%)")
+    println(io, "  window: ", r.window)
+    println(io, "  crs:    ", r.crs)
+    print(io, "  nodata: ", r.nodata.output)
+end

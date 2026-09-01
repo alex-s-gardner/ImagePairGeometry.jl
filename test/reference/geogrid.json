@@ -1,0 +1,3199 @@
+{
+ "cases": [
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     314280.0,
+     120.0,
+     0.0,
+     7785720.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     60,
+     60
+    ]
+   },
+   "dt": 7862400.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "same_crs",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 59,
+    "lOff": 0,
+    "pCount": 59,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 3413,
+    "geotransform": [
+     42360.0,
+     120.0,
+     0.0,
+     -2174760.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     60,
+     60
+    ]
+   },
+   "dt": 7862400.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "cross_crs",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 59,
+    "lOff": 0,
+    "pCount": 59,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 3031,
+    "geotransform": [
+     -2408880.0,
+     120.0,
+     0.0,
+     837480.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     48,
+     48
+    ]
+   },
+   "dt": 15724800.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32719,
+    "origin": [
+     400000.0,
+     2600000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "cross_crs_3031",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      -2408880.0,
+      120.0,
+      0.0,
+      837480.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": -66.86829502226388,
+    "cen_lon": -70.87382064294212,
+    "lCount": 47,
+    "lOff": 0,
+    "pCount": 47,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     315270.0,
+     90.0,
+     0.0,
+     7784730.0,
+     0.0,
+     -90.0
+    ],
+    "size": [
+     60,
+     60
+    ]
+   },
+   "dt": 7862400.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "odd_ratio",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      315270.0,
+      90.0,
+      0.0,
+      7784730.0,
+      0.0,
+      -90.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 59,
+    "lOff": 0,
+    "pCount": 59,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     305280.0,
+     120.0,
+     0.0,
+     7794720.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     60,
+     60
+    ]
+   },
+   "dt": 2764800.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     15.0,
+     -15.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "ratio_15m",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      305280.0,
+      120.0,
+      0.0,
+      7794720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 15.0,
+    "X_res_hex": "0x1.e000000000000p+3",
+    "Y_res": 15.0,
+    "Y_res_hex": "0x1.e000000000000p+3",
+    "cen_lat": 70.1542516193578,
+    "cen_lon": -44.047202028405536,
+    "lCount": 59,
+    "lOff": 0,
+    "pCount": 59,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     315000.0,
+     120.0,
+     0.0,
+     7785000.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     48,
+     48
+    ]
+   },
+   "dt": 432000.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "short_dt",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 47,
+    "lOff": 0,
+    "pCount": 47,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     315000.0,
+     120.0,
+     0.0,
+     7785000.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     48,
+     48
+    ]
+   },
+   "dt": 31536000.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "long_dt",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 47,
+    "lOff": 0,
+    "pCount": 47,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     314280.0,
+     120.0,
+     0.0,
+     7785720.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     60,
+     60
+    ]
+   },
+   "dt": 7862400.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "with_nodata",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      314280.0,
+      120.0,
+      0.0,
+      7785720.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 59,
+    "lOff": 0,
+    "pCount": 59,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 3413,
+    "geotransform": [
+     42360.0,
+     120.0,
+     0.0,
+     -2174760.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     60,
+     60
+    ]
+   },
+   "dt": 7862400.0,
+   "has_full_inputs": true,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "csmaxx",
+    "csmaxy",
+    "csminx",
+    "csminy",
+    "dem",
+    "dhdx",
+    "dhdy",
+    "srx",
+    "sry",
+    "ssm",
+    "vx",
+    "vy"
+   ],
+   "name": "cross_crs_nodata",
+   "outputs": {
+    "window_chip_size_max.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_chip_size_min.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_offset.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_x_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_rdr_off2vel_y_vec.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_scale_factor.tif": {
+     "bands": [
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Float64",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_search_range.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    },
+    "window_stable_surface_mask.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        59,
+        59
+       ]
+      }
+     ],
+     "geotransform": [
+      42360.0,
+      120.0,
+      0.0,
+      -2174760.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      59,
+      59
+     ]
+    }
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 59,
+    "lOff": 0,
+    "pCount": 59,
+    "pOff": 0
+   }
+  },
+  {
+   "chip_size_0": 240.0,
+   "dem": {
+    "epsg": 32624,
+    "geotransform": [
+     315000.0,
+     120.0,
+     0.0,
+     7785000.0,
+     0.0,
+     -120.0
+    ],
+    "size": [
+     48,
+     48
+    ]
+   },
+   "dt": 7862400.0,
+   "has_full_inputs": false,
+   "image": {
+    "epsg": 32624,
+    "origin": [
+     300000.0,
+     7800000.0
+    ],
+    "size": [
+     1200,
+     1200
+    ],
+    "spacing": [
+     30.0,
+     -30.0
+    ]
+   },
+   "input_names": [
+    "dem"
+   ],
+   "name": "dem_only",
+   "outputs": {
+    "window_chip_size_max.tif": null,
+    "window_chip_size_min.tif": null,
+    "window_location.tif": {
+     "bands": [
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      },
+      {
+       "dtype": "Int32",
+       "nodata": -32767.0,
+       "shape": [
+        47,
+        47
+       ]
+      }
+     ],
+     "geotransform": [
+      315000.0,
+      120.0,
+      0.0,
+      7785000.0,
+      0.0,
+      -120.0
+     ],
+     "size": [
+      47,
+      47
+     ]
+    },
+    "window_offset.tif": null,
+    "window_rdr_off2vel_x_vec.tif": null,
+    "window_rdr_off2vel_y_vec.tif": null,
+    "window_scale_factor.tif": null,
+    "window_search_range.tif": null,
+    "window_stable_surface_mask.tif": null
+   },
+   "scalars": {
+    "X_res": 30.0,
+    "X_res_hex": "0x1.e000000000000p+4",
+    "Y_res": 30.0,
+    "Y_res_hex": "0x1.e000000000000p+4",
+    "cen_lat": 70.08002559402264,
+    "cen_lon": -43.79476386318271,
+    "lCount": 47,
+    "lOff": 0,
+    "pCount": 47,
+    "pOff": 0
+   }
+  }
+ ],
+ "provenance": {
+  "autorift_version": "2.1.1",
+  "gdal_version": "3.12.4",
+  "nodata_out": -32767,
+  "proj_version": "9.8.1"
+ }
+}
