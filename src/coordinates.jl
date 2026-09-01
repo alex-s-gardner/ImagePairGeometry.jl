@@ -23,6 +23,11 @@ The coordinate system of an image, determining how a map-projected grid point ma
 index in it.
 
 Subtypes: [`ProjectedCoordinate`](@ref), [`RadarCoordinate`](@ref).
+
+Nothing dispatches on this yet: every kernel signature names `ProjectedCoordinate`, because that is
+the only implemented path. It is a place to hang the radar path from, not a generalization the
+current code relies on — and whether it is the right parent is a question the radar geometry gets to
+answer, since a radar acquisition is not described by an origin, a spacing and a size.
 """
 abstract type AbstractImageCoordinate end
 

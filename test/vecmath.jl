@@ -28,16 +28,22 @@ end
 @testset "unitvec3 divides, it does not scale by the reciprocal" begin
     # The reason this is not `normalize`. `x / n` and `x * (1 / n)` differ in the last bit for
     # most inputs, and the reference divides (`geogridOptical.cpp:1026-1032`).
-    differs = 0
-    for i in 1:2000
-        v = v3(i * 1.7 - 900, i * -0.31 + 12, i * 0.077)
-        u = unitvec3(v)
+    vs = [v3(i * 1.7 - 900, i * -0.31 + 12, i * 0.077) for i in 1:2000]
+
+    # One assertion over the whole sample: the property is uniform, so restating it 2000 times says
+    # nothing more than stating it once.
+    @test all(vs) do v
         n = norm3(v)
-        @test u === v3(v[1] / n, v[2] / n, v[3] / n)
-        recip = v * (1 / n)
-        differs += any(reinterpret(UInt64, u[k]) != reinterpret(UInt64, recip[k]) for k in 1:3)
+        unitvec3(v) === v3(v[1] / n, v[2] / n, v[3] / n)
     end
+
     # Not a property we need, just evidence the distinction is real rather than theoretical.
+    differs = count(vs) do v
+        n = norm3(v)
+        u = unitvec3(v)
+        recip = v * (1 / n)
+        any(reinterpret(UInt64, u[k]) != reinterpret(UInt64, recip[k]) for k in 1:3)
+    end
     @test differs > 0
 end
 

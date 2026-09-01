@@ -4,7 +4,7 @@ using Aqua
 
 include("npz.jl")
 
-@testset "ImagePairGeometry.jl" begin
+@testset verbose=true "ImagePairGeometry.jl" begin
     @testset "Code quality (Aqua.jl)" begin
         Aqua.test_all(ImagePairGeometry)
     end

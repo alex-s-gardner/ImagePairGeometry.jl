@@ -22,12 +22,11 @@ using ImagePairGeometry
 using ImagePairGeometry: PairGeometry, AbstractInputSource, GeometryInputs, REFERENCE_FILES,
                          INT_BANDS, FLOAT_BANDS, nodata_from, NoDataPolicy
 using Rasters
-using Rasters: AbstractRaster, Band
+using Rasters: AbstractRaster
 using DimensionalData
 using ArchGDAL
 using DiskArrays
 
-const RA = Rasters
 const GFT = Rasters.GeoFormatTypes
 
 # Where a lookup coordinate sits within its pixel, as an offset from it to the pixel's outer edge.
@@ -262,18 +261,6 @@ end
 _crs_of(::Nothing) = nothing
 _crs_of(epsg::Integer) = GFT.EPSG(Int(epsg))
 _crs_of(crs::GFT.GeoFormat) = crs
-
-# The CRS reaches here as an EPSG integer, a `GeoFormatTypes` object of any flavour, or nothing.
-# `convert(WellKnownText, x)` handles the GeoFormatTypes cases — wrapping in `WellKnownText(x)`
-# instead builds a nested object GDAL cannot read.
-_setcrs!(ds, ::Nothing) = nothing
-_setcrs!(ds, epsg::Integer) =
-    ArchGDAL.setproj!(ds, ArchGDAL.toWKT(ArchGDAL.importEPSG(Int(epsg))))
-_setcrs!(ds, crs::GFT.WellKnownText) = ArchGDAL.setproj!(ds, GFT.val(crs))
-_setcrs!(ds, crs::GFT.EPSG) =
-    ArchGDAL.setproj!(ds, ArchGDAL.toWKT(ArchGDAL.importEPSG(Int(GFT.val(crs)[1]))))
-_setcrs!(ds, crs::GFT.GeoFormat) =
-    ArchGDAL.setproj!(ds, GFT.val(convert(GFT.WellKnownText, crs)))
 
 export RasterInputs
 

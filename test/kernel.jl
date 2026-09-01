@@ -63,18 +63,17 @@ end
     @test !isidentity(slow)
 
     n = surface_normal(0.05, -0.03)
-    for i in 0:40, j in 0:40
-        gx = 300000.0 + i * 120.0
-        gy = 7800000.0 - j * 120.0
-        a = pointgeometry(fast, gx, gy, 500.0, c, n)
-        b = pointgeometry(slow, gx, gy, 500.0, c, n)
-        @test a.xunit == b.xunit
-        @test a.yunit == b.yunit
-        @test reinterpret(UInt64, a.xlen) == reinterpret(UInt64, b.xlen)
-        @test reinterpret(UInt64, a.ylen) == reinterpret(UInt64, b.ylen)
-        @test pixel_index(a, c) == pixel_index(b, c)
-        @test scale_factors(a, c) == scale_factors(b, c)
+    # One assertion over the whole lattice rather than six per point: the property is structural, so
+    # a single counterexample is what matters and 1681 identical restatements are noise.
+    agrees(gx, gy) = let a = pointgeometry(fast, gx, gy, 500.0, c, n),
+                         b = pointgeometry(slow, gx, gy, 500.0, c, n)
+        a.xunit == b.xunit && a.yunit == b.yunit &&
+            reinterpret(UInt64, a.xlen) == reinterpret(UInt64, b.xlen) &&
+            reinterpret(UInt64, a.ylen) == reinterpret(UInt64, b.ylen) &&
+            pixel_index(a, c) == pixel_index(b, c) &&
+            scale_factors(a, c) == scale_factors(b, c)
     end
+    @test all(agrees(300000.0 + i * 120.0, 7800000.0 - j * 120.0) for i in 0:40, j in 0:40)
 end
 
 @testset "affine transform: derived by hand" begin

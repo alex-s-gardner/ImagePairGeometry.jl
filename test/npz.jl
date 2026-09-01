@@ -10,6 +10,8 @@
 # Anything else throws rather than being guessed at.
 
 using CodecZlib: DeflateDecompressor, transcode
+using ImagePairGeometry
+using Proj
 using Test
 
 """
@@ -111,4 +113,63 @@ function load_npz(path::AbstractString)
         p += 46 + namelen + extralen + commentlen
     end
     return out
+end
+
+# ---------------------------------------------------------------------------
+# Shared fixture assembly.
+#
+# `geogrid.jl` and `blocks.jl` both build inputs from the same `geogrid.json` / `geogrid_arrays.npz`
+# pair, and the 12-field `GeometryInputs` call is the same in each. Written once here — the file both
+# already include — so a fixture schema change is one edit rather than three.
+
+"""
+    fixture_inputs(arrays, case, window) -> GeometryInputs
+
+The `GeometryInputs` for a fixture case, over `window`.
+
+A band absent from the case's `input_names` becomes `nothing`, which is how the driver learns not to
+compute the outputs depending on it.
+
+`parse_npy` reverses the C-order dimensions, so a member arrives with the x index varying along the
+first axis — the orientation this package uses — and needs no transpose.
+"""
+function fixture_inputs(arrays::Dict{String,Array{Float64}}, case, window)
+    present = Set(String.(case.input_names))
+    band(k) = k in present ? arrays["$(case.name)/input/$k"][window] : nothing
+    return GeometryInputs(dem = band("dem"),
+                          dhdx = band("dhdx"), dhdy = band("dhdy"),
+                          vx = band("vx"), vy = band("vy"),
+                          srx = band("srx"), sry = band("sry"),
+                          csminx = band("csminx"), csminy = band("csminy"),
+                          csmaxx = band("csmaxx"), csmaxy = band("csmaxy"),
+                          ssm = band("ssm"))
+end
+
+"""
+    fixture_scene(case) -> NamedTuple
+
+The grid, image coordinate system and pair a fixture case describes, plus a `transform` thunk.
+
+`transform` builds a fresh `TransformPair` each call: for a same-CRS case an `IdentityTransform`, and
+otherwise a PROJ pair. A thunk rather than a value because a threaded run needs one PROJ context per
+task, and because `footprint_bounds` and the run itself each want one.
+"""
+function fixture_scene(case)
+    img, dem = case.image, case.dem
+    coord = ProjectedCoordinate(
+        origin = (Float64(img.origin[1]), Float64(img.origin[2])),
+        spacing = (Float64(img.spacing[1]), Float64(img.spacing[2])),
+        size = (Int(img.size[1]), Int(img.size[2])))
+    grid = MapGrid(geotransform = ntuple(i -> Float64(dem.geotransform[i]), 6),
+                   size = (Int(dem.size[1]), Int(dem.size[2])), crs = Int(dem.epsg))
+    # The fixture drives the reference by setting `startingX`/`startingY` directly, so the pair here
+    # is the image against itself and contributes only the interval.
+    fp = ImageFootprint(origin = coord.origin, spacing = coord.spacing, size = coord.size)
+    pair = coregister(fp, fp; dt = Float64(case.dt))
+    same = Int(img.epsg) == Int(dem.epsg)
+    transform = () -> same ? transform_pair(IdentityTransform()) :
+        TransformPair(Proj.Transformation("EPSG:$(Int(dem.epsg))", "EPSG:$(Int(img.epsg))"),
+                      Proj.Transformation("EPSG:$(Int(img.epsg))", "EPSG:$(Int(dem.epsg))"))
+    return (; coord, grid, pair, transform, same,
+            params = GeometryParams(chip_size_0 = Float64(case.chip_size_0)))
 end

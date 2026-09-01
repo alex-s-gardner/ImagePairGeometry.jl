@@ -39,53 +39,14 @@ end
 
 """Reference geometry for one fixture case, computed by this package."""
 function run_case(c)
-    img, dem = c.image, c.dem
-    coord = ProjectedCoordinate(
-        origin = (Float64(img.origin[1]), Float64(img.origin[2])),
-        spacing = (Float64(img.spacing[1]), Float64(img.spacing[2])),
-        size = (Int(img.size[1]), Int(img.size[2])))
-    grid = MapGrid(geotransform = ntuple(i -> Float64(dem.geotransform[i]), 6),
-                   size = (Int(dem.size[1]), Int(dem.size[2])), crs = Int(dem.epsg))
-
-    # The pair contributes the interval and the coordinate system; the fixture drives the reference
-    # by setting `startingX`/`startingY` directly, so the pair here is the image against itself.
-    fp = ImageFootprint(origin = coord.origin, spacing = coord.spacing, size = coord.size)
-    pair = coregister(fp, fp; dt = Float64(c.dt))
-
-    tf = if Int(img.epsg) == Int(dem.epsg)
-        # Same CRS: the reference builds a PROJ noop, this package dispatches on the identity.
-        # Asserted equivalent below by also running the explicit PROJ path.
-        transform_pair(IdentityTransform())
-    else
-        TransformPair(Proj.Transformation("EPSG:$(Int(dem.epsg))", "EPSG:$(Int(img.epsg))"),
-                      Proj.Transformation("EPSG:$(Int(img.epsg))", "EPSG:$(Int(dem.epsg))"))
-    end
-
+    s = fixture_scene(c)
+    tf = s.transform()
     # `footprint_bounds` takes the image-to-grid direction from the pair itself.
-    win = grid_window(grid, footprint_bounds(tf, coord))
-    # `parse_npy` reverses the C-order dims, so a member already arrives with the x index
-    # varying along the first axis — the orientation this package uses.
-    arr(kind) = GARR["$(c.name)/input/$kind"][win]
-    names = Set(String.(c.input_names))
-    has(k) = k in names
-    inputs = GeometryInputs(
-        dem = arr("dem"),
-        dhdx = has("dhdx") ? arr("dhdx") : nothing,
-        dhdy = has("dhdy") ? arr("dhdy") : nothing,
-        vx = has("vx") ? arr("vx") : nothing,
-        vy = has("vy") ? arr("vy") : nothing,
-        srx = has("srx") ? arr("srx") : nothing,
-        sry = has("sry") ? arr("sry") : nothing,
-        csminx = has("csminx") ? arr("csminx") : nothing,
-        csminy = has("csminy") ? arr("csminy") : nothing,
-        csmaxx = has("csmaxx") ? arr("csmaxx") : nothing,
-        csmaxy = has("csmaxy") ? arr("csmaxy") : nothing,
-        ssm = has("ssm") ? arr("ssm") : nothing)
-
-    r = pairgeometry(grid, pair, inputs; transform = tf, window = win,
-                     params = GeometryParams(chip_size_0 = Float64(c.chip_size_0)),
+    win = grid_window(s.grid, footprint_bounds(tf, s.coord))
+    r = pairgeometry(s.grid, s.pair, fixture_inputs(GARR, c, win);
+                     transform = tf, window = win, params = s.params,
                      nodata = nodata_from(-32767.0))
-    return r, win, coord, grid, tf
+    return r, win, s.coord, s.grid, tf
 end
 
 """The reference's band for `file`/`band`, oriented to match this package's arrays."""

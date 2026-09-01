@@ -24,39 +24,13 @@ const BARR = load_npz(joinpath(@__DIR__, "reference", "geogrid_arrays.npz"))
 """Grid, pair, transform, window and inputs for a fixture case."""
 function setup_case(name)
     c = only(filter(x -> x.name == name, collect(BFIX.cases)))
-    img, dem = c.image, c.dem
-    coord = ProjectedCoordinate(
-        origin = (Float64(img.origin[1]), Float64(img.origin[2])),
-        spacing = (Float64(img.spacing[1]), Float64(img.spacing[2])),
-        size = (Int(img.size[1]), Int(img.size[2])))
-    grid = MapGrid(geotransform = ntuple(i -> Float64(dem.geotransform[i]), 6),
-                   size = (Int(dem.size[1]), Int(dem.size[2])), crs = Int(dem.epsg))
-    fp = ImageFootprint(origin = coord.origin, spacing = coord.spacing, size = coord.size)
-    pair = coregister(fp, fp; dt = Float64(c.dt))
-
-    # A factory rather than a built transform: called once per task, so each task gets a PROJ
-    # transformation on a context it alone uses. Constructing two on the shared global context
-    # concurrently corrupts its SQLite handle — see the Proj extension.
-    same = Int(img.epsg) == Int(dem.epsg)
-    factory = ProjTransformFactory(Int(dem.epsg), Int(img.epsg))
-    makepair() = same ? transform_pair(IdentityTransform()) : factory()
-
-    win = grid_window(grid, footprint_bounds(makepair(), coord))
-    arr(k) = BARR["$name/input/$k"][win]
-    names = Set(String.(c.input_names))
-    has(k) = k in names
-    inputs = GeometryInputs(
-        dem = arr("dem"),
-        dhdx = has("dhdx") ? arr("dhdx") : nothing, dhdy = has("dhdy") ? arr("dhdy") : nothing,
-        vx = has("vx") ? arr("vx") : nothing, vy = has("vy") ? arr("vy") : nothing,
-        srx = has("srx") ? arr("srx") : nothing, sry = has("sry") ? arr("sry") : nothing,
-        csminx = has("csminx") ? arr("csminx") : nothing,
-        csminy = has("csminy") ? arr("csminy") : nothing,
-        csmaxx = has("csmaxx") ? arr("csmaxx") : nothing,
-        csmaxy = has("csmaxy") ? arr("csmaxy") : nothing,
-        ssm = has("ssm") ? arr("ssm") : nothing)
-    return (; grid, pair, coord, win, inputs, makepair,
-            params = GeometryParams(chip_size_0 = Float64(c.chip_size_0)))
+    s = fixture_scene(c)
+    win = grid_window(s.grid, footprint_bounds(s.transform(), s.coord))
+    # `makepair` is a thunk, called once per task: a PROJ transformation wraps a `PJ*` on a context
+    # that PROJ documents as usable from one thread at a time, and building two concurrently on the
+    # shared global context corrupts its SQLite handle.
+    return (; s.grid, s.pair, s.coord, win, s.params,
+            inputs = fixture_inputs(BARR, c, win), makepair = s.transform)
 end
 
 """Assert two results agree on every band, floats compared bitwise."""

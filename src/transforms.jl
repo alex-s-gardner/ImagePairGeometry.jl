@@ -113,8 +113,12 @@ transform_pair(p::TransformPair) = p
 """
     isidentity(t) -> Bool
 
-Whether `t` is the identity, in which case the kernel takes an exact path that computes the axis
-unit vectors and scale factors in closed form instead of transforming.
+Whether `t` is the identity.
+
+A predicate for inspecting a transform, not the mechanism behind the fast path: that is chosen by
+dispatch on [`IdentityTransform`](@ref), so nothing in the kernel branches on this at runtime. A
+`Proj.Transformation` between two identical CRSs is a no-op pipeline but reports `false`, since only
+the type is examined.
 """
 isidentity(::IdentityTransform) = true
 isidentity(::Any) = false

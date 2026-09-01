@@ -38,14 +38,14 @@ end
     @test size(pts) == size(r)
 
     sentinel = Int32(-32767)
-    for k in eachindex(r.location_x)
-        r.location_x[k] == sentinel && continue
-        # Geogrid's index is zero-based; AutoRIFT's is one-based. Exactly one, and no half pixel:
-        # AutoRIFT adds that at correlation time for every pyramid level.
-        @test pts.x[k] == r.location_x[k] + 1
-        @test pts.y[k] == r.location_y[k] + 1
-        @test isinteger(pts.x[k])
-    end
+    valid = findall(!=(sentinel), r.location_x)
+    # Geogrid's index is zero-based; AutoRIFT's is one-based. Exactly one, and no half pixel:
+    # AutoRIFT adds that at correlation time for every pyramid level. Asserted over the whole grid
+    # at once — the property is uniform, so one assertion per point would report the same fact
+    # thousands of times.
+    @test all(k -> pts.x[k] == r.location_x[k] + 1, valid)
+    @test all(k -> pts.y[k] == r.location_y[k] + 1, valid)
+    @test all(k -> isinteger(pts.x[k]), valid)
 end
 
 @testset "invalid points are skipped, not searched" begin
@@ -55,13 +55,11 @@ end
 
     invalid = findall(==(sentinel), r.location_x)
     @test !isempty(invalid)     # the window overhangs the image, so some points are outside
-    for k in invalid
-        # Zero radius is how AutoRIFT marks a point to skip. Passing the sentinel through would make
-        # the radius negative, which `gridpoints`' margin logic would size itself from.
-        @test pts.radius_x[k] == 0
-        @test pts.radius_y[k] == 0
-        @test !AutoRIFT.issearchable(pts, k)
-    end
+    # Zero radius is how AutoRIFT marks a point to skip. Passing the sentinel through would make the
+    # radius negative, which `gridpoints`' margin logic would size itself from.
+    @test all(iszero, pts.radius_x[invalid])
+    @test all(iszero, pts.radius_y[invalid])
+    @test !any(k -> AutoRIFT.issearchable(pts, k), invalid)
 
     valid = findall(!=(sentinel), r.location_x)
     @test AutoRIFT.nsearchable(pts) == length(valid)
@@ -73,12 +71,11 @@ end
     r, = ar_case()
     pts = AutoRIFT.pointset(r; pixel_size = 30.0)
     sentinel = Int32(-32767)
-    for k in findall(!=(sentinel), r.location_x)
-        @test pts.radius_x[k] == r.search_x[k]
-        @test pts.radius_y[k] == r.search_y[k]
-        @test pts.dx_prior[k] == r.offset_x[k]
-        @test pts.dy_prior[k] == r.offset_y[k]
-    end
+    valid = findall(!=(sentinel), r.location_x)
+    @test all(k -> pts.radius_x[k] == r.search_x[k], valid)
+    @test all(k -> pts.radius_y[k] == r.search_y[k], valid)
+    @test all(k -> pts.dx_prior[k] == r.offset_x[k], valid)
+    @test all(k -> pts.dy_prior[k] == r.offset_y[k], valid)
 end
 
 @testset "chip size" begin
@@ -96,14 +93,12 @@ end
 
     # Bounds are per point, and a bound of zero means unbounded in AutoRIFT.
     sentinel = Int32(-32767)
-    for k in findall(!=(sentinel), r.location_x)
-        @test pts.chip_size_min_x[k] == r.chip_min_x[k]
-        @test pts.chip_size_max_x[k] == r.chip_max_x[k]
-    end
-    for k in findall(==(sentinel), r.location_x)
-        @test pts.chip_size_min_x[k] == 0
-        @test pts.chip_size_max_x[k] == 0
-    end
+    valid = findall(!=(sentinel), r.location_x)
+    invalid = findall(==(sentinel), r.location_x)
+    @test all(k -> pts.chip_size_min_x[k] == r.chip_min_x[k], valid)
+    @test all(k -> pts.chip_size_max_x[k] == r.chip_max_x[k], valid)
+    @test all(iszero, pts.chip_size_min_x[invalid])
+    @test all(iszero, pts.chip_size_max_x[invalid])
 
     # Neither given is an error rather than a silent default: the base extent is not recoverable
     # from a PairGeometry, which stores the bounds but not the base.
@@ -129,9 +124,7 @@ end
     # The mask is boolean, and false wherever the point is invalid.
     @test eltype(c.stable_surface) === Bool
     sentinel = Int32(-32767)
-    for k in findall(==(sentinel), r.location_x)
-        @test !c.stable_surface[k]
-    end
+    @test !any(c.stable_surface[findall(==(sentinel), r.location_x)])
     @test all(c.stable_surface[findall(!=(sentinel), r.location_x)])
 
     # A mask of zeros means nothing is stable, not that the band is missing.

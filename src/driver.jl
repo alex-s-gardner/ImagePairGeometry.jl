@@ -233,30 +233,11 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
             end
         end
 
-        if has_csmin
-            cx = Float64(inp.csminx[k])
-            if ismissingval(nd, cx)
-                r.chip_min_x[k] = out
-                r.chip_min_y[k] = out
-            else
-                # Truncated, not rounded — unlike every other integer output here.
-                px, py = chip_pixels(cx, Float64(inp.csminy[k]), params.chip_size_0, pix_x, pix_y)
-                r.chip_min_x[k] = ctrunc32(px)
-                r.chip_min_y[k] = ctrunc32(py)
-            end
-        end
-
-        if has_csmax
-            cx = Float64(inp.csmaxx[k])
-            if ismissingval(nd, cx)
-                r.chip_max_x[k] = out
-                r.chip_max_y[k] = out
-            else
-                px, py = chip_pixels(cx, Float64(inp.csmaxy[k]), params.chip_size_0, pix_x, pix_y)
-                r.chip_max_x[k] = ctrunc32(px)
-                r.chip_max_y[k] = ctrunc32(py)
-            end
-        end
+        # The min and max chip-size bounds are the same computation on different rasters.
+        has_csmin && _chip_bound!(r.chip_min_x, r.chip_min_y, inp.csminx, inp.csminy, k,
+                                  params.chip_size_0, pix_x, pix_y, nd, out)
+        has_csmax && _chip_bound!(r.chip_max_x, r.chip_max_y, inp.csmaxx, inp.csmaxy, k,
+                                  params.chip_size_0, pix_x, pix_y, nd, out)
 
         if has_ssm
             m = Float64(inp.ssm[k])
@@ -267,4 +248,22 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     # Bands the inputs do not support stay at their sentinel; the reference writes no file for them.
     has_slope || (fill!(r.scale_x, fout); fill!(r.scale_y, fout))
     return r
+end
+
+# One chip-size bound at one point, in pixels.
+#
+# The reference truncates here rather than rounding — unlike every other integer output — so this
+# uses `ctrunc32`. See `REFERENCE.md`.
+@inline function _chip_bound!(dest_x, dest_y, src_x, src_y, k, chip_size_0::Float64,
+                              pix_x::Int, pix_y::Int, nd::NoDataPolicy, sentinel::Int32)
+    cx = Float64(src_x[k])
+    if ismissingval(nd, cx)
+        dest_x[k] = sentinel
+        dest_y[k] = sentinel
+    else
+        px, py = chip_pixels(cx, Float64(src_y[k]), chip_size_0, pix_x, pix_y)
+        dest_x[k] = ctrunc32(px)
+        dest_y[k] = ctrunc32(py)
+    end
+    return nothing
 end

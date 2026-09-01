@@ -116,17 +116,27 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
                               ntasks::Union{Nothing,Int} = nothing,
                               params::GeometryParams = GeometryParams(),
                               nodata::NoDataPolicy = nodata_from(nothing))
-    probe = _resolve_transform(transform)
     coord = pair.coordinate
-    win = window === nothing ? grid_window(grid, footprint_bounds(probe, coord)) : window
+    # Validated before anything is built, so a bad argument is reported rather than surfacing as a
+    # failure deeper in.
+    ntasks === nothing || ntasks >= 1 ||
+        throw(ArgumentError("ntasks must be at least 1, got $ntasks"))
+
+    # Resolved at most once, and only where it is needed: deriving the window needs a transform, and
+    # a serial run needs one for the whole loop, but a threaded run builds its own per task. Each
+    # resolution of a factory creates a PROJ context and two pipelines — around 1.7 ms, dominated by
+    # a cold `proj.db` cache — so a wasted one is worth avoiding.
+    serial = ntasks == 1
+    shared = (window === nothing || serial) ? _resolve_transform(transform) : nothing
+    win = window === nothing ? grid_window(grid, footprint_bounds(shared, coord)) : window
 
     result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata)
     blocks = block_ranges(win, blocksize)
     n = ntasks === nothing ? min(length(blocks), Threads.nthreads()) : ntasks
-    n >= 1 || throw(ArgumentError("ntasks must be at least 1, got $n"))
 
     if n == 1
-        tf = _resolve_transform(transform)
+        # One task means one owner, so whatever was already resolved is reused rather than rebuilt.
+        tf = shared === nothing ? _resolve_transform(transform) : shared
         for b in blocks
             _run_block!(result, grid, coord, pair.dt, source, tf, params, nodata, b, win)
         end

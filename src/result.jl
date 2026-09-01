@@ -119,8 +119,11 @@ needs no explicit write.
 function allocate_geometry(window::CartesianIndices{2}, geotransform::NTuple{6,Float64},
                            crs, nodata::NoDataPolicy)
     sz = size(window)
-    ints = ntuple(_ -> fill(Int32(nodata.output), sz), length(INT_BANDS))
-    floats = ntuple(_ -> fill(nodata.output, sz), length(FLOAT_BANDS))
+    # `Val` so the tuple lengths are compile-time constants. With a plain `length(INT_BANDS)` the
+    # result is `Tuple{Vararg{Matrix{Int32}}}`, of unknown length, and splatting that into the
+    # constructor becomes a call `juliac --trim` cannot resolve.
+    ints = ntuple(_ -> fill(Int32(nodata.output), sz), Val(length(INT_BANDS)))
+    floats = ntuple(_ -> fill(nodata.output, sz), Val(length(FLOAT_BANDS)))
     return PairGeometry(ints..., floats..., geotransform, crs, window, nodata)
 end
 
@@ -136,14 +139,7 @@ npoints(r::PairGeometry) = length(r.location_x)
 
 Number of grid points that mapped inside the image, i.e. whose location is not the sentinel.
 """
-function nvalid(r::PairGeometry)
-    s = Int32(r.nodata.output)
-    n = 0
-    for i in eachindex(r.location_x)
-        @inbounds r.location_x[i] == s || (n += 1)
-    end
-    return n
-end
+nvalid(r::PairGeometry) = count(!=(Int32(r.nodata.output)), r.location_x)
 
 function Base.show(io::IO, ::MIME"text/plain", r::PairGeometry)
     nx, ny = size(r)
