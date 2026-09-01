@@ -108,7 +108,7 @@ because each point depends only on its own inputs.
 threaded run over a PROJ transform — a zero-argument function returning a fresh `TransformPair`.
 That last form exists because `Proj.Transformation` wraps a `PJ*` on a context that is not
 thread-safe: each task calls it once and owns the result for its lifetime. See
-[`ProjTransformFactory`](@ref) in the `Proj` extension.
+`ProjTransformFactory`, defined when `Proj` is loaded.
 """
 function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::AbstractInputSource;
                               transform, window = nothing,
