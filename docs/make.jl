@@ -1,13 +1,15 @@
 using ImagePairGeometry
 using Documenter
-using Proj   # loads ImagePairGeometryProjExt, so its docstrings are part of the built docs
+using Proj      # loads ImagePairGeometryProjExt
+using Rasters, ArchGDAL, DimensionalData, DiskArrays  # loads ImagePairGeometryRastersExt
 
 const PROJ_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)
+const RASTERS_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)
 
 DocMeta.setdocmeta!(ImagePairGeometry, :DocTestSetup, :(using ImagePairGeometry); recursive=true)
 
 makedocs(;
-    modules=[ImagePairGeometry, PROJ_EXT],
+    modules=[ImagePairGeometry, PROJ_EXT, RASTERS_EXT],
     authors="Alex Gardner <alex.s.gardner@jpl.nasa.gov>, and contributors",
     sitename="ImagePairGeometry.jl",
     format=Documenter.HTML(;

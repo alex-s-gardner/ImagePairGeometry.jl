@@ -16,4 +16,5 @@ include("npz.jl")
     @time @testset "geogrid vs reference" begin include("geogrid.jl") end
     @time @testset "blocks and threads" begin include("blocks.jl") end
     @time @testset "AutoRIFT handoff" begin include("autorift.jl") end
+    @time @testset "Rasters IO" begin include("rasters.jl") end
 end

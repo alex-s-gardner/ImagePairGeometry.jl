@@ -62,7 +62,7 @@ end
 """
     ImagePairGeometry.mapgrid(dem::AbstractRaster) -> MapGrid
 
-A [`MapGrid`](@ref) describing `dem`'s grid.
+A `MapGrid` describing `dem`'s grid.
 
 The grid's origin is the *outer edge* of the first pixel, the convention `MapGrid` and GDAL share. A
 raster read from a GeoTIFF is `Intervals{Start}`, so its lookups are already edges; one built in
@@ -82,9 +82,9 @@ function ImagePairGeometry.mapgrid(dem::AbstractRaster)
 end
 
 """
-    ImagePairGeometry.footprint(image::AbstractRaster) -> ImageFootprint
+    ImagePairGeometry.image_footprint(image::AbstractRaster) -> ImageFootprint
 
-An [`ImageFootprint`](@ref) describing where `image` sits, for [`coregister`](@ref).
+An `ImageFootprint` describing where `image` sits, for `coregister`.
 
 Origin is the first pixel's *center*, which is what `ImageFootprint` documents and what the
 reference's `startingX`/`startingY` are — so a lookup holding edges is shifted half a pixel inward.
@@ -92,7 +92,7 @@ reference's `startingX`/`startingY` are — so a lookup holding edges is shifted
 Only the geometry is read, never the pixels, so this is cheap on a disk-backed scene and needs no
 data at all.
 """
-function ImagePairGeometry.footprint(image::AbstractRaster)
+function ImagePairGeometry.image_footprint(image::AbstractRaster)
     x, y = dims(image, X), dims(image, Y)
     dx, dy = _step_of(x, :X), _step_of(y, :Y)
     # From the edge to the center: undo the edge offset, then add half a pixel.
@@ -120,7 +120,7 @@ end
 
 An input source reading each block's window from rasters.
 
-Accepts the same eleven optional rasters as [`GeometryInputs`](@ref), and each may be lazy: a
+Accepts the same eleven optional rasters as `GeometryInputs`, and each may be lazy: a
 disk-backed `Raster` is read one window at a time, so a grid larger than memory is never
 materialized. All must share the grid the geometry is computed on.
 
@@ -188,7 +188,7 @@ block that is a whole number of chunks reads each byte once. `floor` guards the 
 striped GeoTIFF — what `Rasters.write` produces by default — reports chunks one row tall, and a block
 one row tall would issue a read per row.
 
-Returns [`DEFAULT_BLOCKSIZE`](@ref) when no input is disk-backed, since then there is no chunking to
+Returns `ImagePairGeometry.DEFAULT_BLOCKSIZE` when no input is disk-backed, since then there is no chunking to
 align to.
 """
 function ImagePairGeometry.blocksize_from_chunks(src::RasterInputs; floor::Int = 256)
@@ -227,29 +227,41 @@ function ImagePairGeometry.write_geotiffs(dir::AbstractString, g::PairGeometry)
         all(b -> all(==(sentinel), b), bands) && continue
 
         path = joinpath(dir, filename)
-        # Built in an in-memory dataset and copied out, rather than written into a GTiff directly.
-        # A GTiff created for writing accepts a geotransform only under conditions that are easy to
-        # violate silently — the file then carries GDAL's default `(0, 1, 0, 0, 0, 1)` while the
-        # projection reads back correctly, so the output looks georeferenced and is not. Copying from
-        # MEM sidesteps that: the geotransform is set on a dataset that always accepts it, and
-        # `CreateCopy` carries it across.
-        ArchGDAL.create(""; driver = ArchGDAL.getdriver("MEM"),
-                        width = nx, height = ny, nbands = length(bands), dtype = T) do mem
-            ArchGDAL.setgeotransform!(mem, collect(gt))
-            _setcrs!(mem, g.crs)
-            for (i, band) in enumerate(bands)
-                b = ArchGDAL.getband(mem, i)
-                ArchGDAL.setnodatavalue!(b, Float64(g.nodata.output))
-                # ArchGDAL indexes (x, y); the bands are already in that order.
-                ArchGDAL.write!(b, band)
-            end
-            ArchGDAL.destroy(ArchGDAL.copy(mem; filename = path,
-                                           driver = ArchGDAL.getdriver("GTiff")))
+        # Written through `Rasters.write` rather than by driving ArchGDAL directly. Setting a
+        # geotransform on a GTiff opened for writing is silently ineffective under conditions that
+        # are hard to pin down — the file ends up with GDAL's default while its projection, band data
+        # and nodata all persist, so it looks georeferenced and is not. Handing Rasters a
+        # georeferenced `Raster` puts that step where Rasters tests it.
+        #
+        # Lookups are `Intervals(Start())` to match what GDAL writes, and are built from the
+        # geotransform's own low edge per axis — `Start` is the low edge in *coordinate* order, so a
+        # negative step counts from the far end. This is `_edge_offset` in reverse.
+        x0 = gt[1] + (gt[2] < 0 ? gt[2] : 0.0)
+        y0 = gt[4] + (gt[6] < 0 ? gt[6] : 0.0)
+        xdim = X(range(x0; step = gt[2], length = nx); sampling = Lk.Intervals(Lk.Start()))
+        ydim = Y(range(y0; step = gt[6], length = ny); sampling = Lk.Intervals(Lk.Start()))
+
+        # A multi-band file is one 3-D raster with a `Band` dimension, not a stack: `Rasters.write`
+        # splits a stack into one file per layer, and the reference's consumers expect a single file
+        # with its bands in order.
+        cube = Array{T}(undef, nx, ny, length(bands))
+        for (i, band) in enumerate(bands)
+            cube[:, :, i] .= band
         end
+        Rasters.write(path, Rasters.Raster(cube, (xdim, ydim, Rasters.Band(1:length(bands)));
+                                           missingval = T(g.nodata.output),
+                                           crs = _crs_of(g.crs)); force = true)
+        isfile(path) || error("write_geotiffs did not produce $path")
         push!(written, path)
     end
     return written
 end
+
+# The CRS as something Rasters accepts: an EPSG integer becomes a `GFT.EPSG`, anything already a
+# `GeoFormat` passes through, and `nothing` stays nothing.
+_crs_of(::Nothing) = nothing
+_crs_of(epsg::Integer) = GFT.EPSG(Int(epsg))
+_crs_of(crs::GFT.GeoFormat) = crs
 
 # The CRS reaches here as an EPSG integer, a `GeoFormatTypes` object of any flavour, or nothing.
 # `convert(WellKnownText, x)` handles the GeoFormatTypes cases — wrapping in `WellKnownText(x)`

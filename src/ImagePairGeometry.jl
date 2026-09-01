@@ -39,7 +39,7 @@ export pairgeometry, pairgeometry_blocked, npoints, nvalid
 export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
 export proj_transform
-export mapgrid, footprint, blocksize_from_chunks, write_geotiffs
+export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
@@ -73,11 +73,11 @@ A [`MapGrid`](@ref) describing a raster's grid. Defined when `Rasters` is loaded
 function mapgrid end
 
 """
-    footprint(image) -> ImageFootprint
+    image_footprint(image) -> ImageFootprint
 
 An [`ImageFootprint`](@ref) describing where a raster sits. Defined when `Rasters` is loaded.
 """
-function footprint end
+function image_footprint end
 
 """
     blocksize_from_chunks(source; floor = 256) -> NTuple{2,Int}

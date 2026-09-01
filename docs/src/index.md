@@ -159,6 +159,16 @@ Modules = [Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)]
 Order = [:type, :function]
 ```
 
+## Raster IO
+
+Available when `Rasters`, `ArchGDAL`, `DimensionalData` and `DiskArrays` are loaded. Reads inputs a
+window at a time from disk-backed rasters, and writes the reference's nine GeoTIFFs.
+
+```@autodocs
+Modules = [Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)]
+Order = [:type, :function]
+```
+
 ## Index
 
 ```@index

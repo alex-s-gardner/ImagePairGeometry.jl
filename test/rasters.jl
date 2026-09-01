@@ -87,7 +87,7 @@ load(p) = Raster(p; lazy = true)
         @test grid.geotransform[6] ≈ GT[6]
         @test grid.size == (NGRID, NGRID)
 
-        fp = footprint(dem)
+        fp = ImagePairGeometry.image_footprint(dem)
         # A footprint's origin is the first pixel *center*, half a pixel inside the edge.
         @test fp.origin[1] ≈ GT[1] + GT[2] / 2
         @test fp.origin[2] ≈ GT[4] + GT[6] / 2
@@ -264,7 +264,7 @@ end
             @test grid.size == (8, 6)
 
             # And a footprint's origin is the first pixel center, half a step inside the origin.
-            fp = footprint(Raster(path; lazy = true))
+            fp = ImagePairGeometry.image_footprint(Raster(path; lazy = true))
             @test fp.origin[1] ≈ gt[1] + gt[2] / 2
             @test fp.origin[2] ≈ gt[4] + gt[6] / 2
         end
@@ -280,7 +280,7 @@ end
     @test grid.geotransform[2] ≈ 2.0
     @test grid.geotransform[6] ≈ -5.0
     # A point lookup's coordinates are already centers, so a footprint takes them unchanged.
-    fp = footprint(r)
+    fp = ImagePairGeometry.image_footprint(r)
     @test fp.origin[1] ≈ 10.0
     @test fp.origin[2] ≈ 100.0
 end
@@ -292,5 +292,5 @@ end
                                                span = Rasters.Irregular(1.0, 16.0),
                                                sampling = Intervals(Start()))), Y(1.0:5.0)))
     @test_throws "not regularly spaced" mapgrid(r)
-    @test_throws "not regularly spaced" ImagePairGeometry.footprint(r)
+    @test_throws "not regularly spaced" ImagePairGeometry.image_footprint(r)
 end
