@@ -168,7 +168,10 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     out = Int32(nd.output)
     fout = nd.output
 
-    for (k, idx) in enumerate(win)
+    # `win` gives grid indices; the input and output arrays are indexed by position within the
+    # window. Both are walked together with `zip` rather than by linear index, so a view whose axes
+    # start elsewhere — a block of a larger result — is handled without an offset calculation.
+    for (idx, k) in zip(win, eachindex(r.location_x, inp.dem))
         i, j = idx.I
         gx, gy = gridpoint_center(grid, i, j)
         gz = Float64(inp.dem[k])

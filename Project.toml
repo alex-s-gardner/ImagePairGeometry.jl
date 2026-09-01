@@ -7,7 +7,14 @@ authors = ["Alex Gardner <alex.s.gardner@jpl.nasa.gov>", "and contributors"]
 Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
+[weakdeps]
+Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
+
+[extensions]
+ImagePairGeometryProjExt = "Proj"
+
 [compat]
 Extents = "0.1"
+Proj = "1.9"
 StaticArrays = "1.9"
 julia = "1.10"

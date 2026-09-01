@@ -35,7 +35,10 @@ export MapGrid, footprint_bounds, grid_window
 export IdentityTransform, AffineTransform, TransformPair, transform_pair
 export NoDataPolicy, nodata_from
 export PairGeometry, GeometryInputs, GeometryParams, SearchRangeScaling
-export pairgeometry, npoints, nvalid
+export pairgeometry, pairgeometry_blocked, npoints, nvalid
+export AbstractInputSource, InMemoryInputs, readblock, block_ranges
+export AbstractTransformFactory
+export proj_transform
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
@@ -49,5 +52,16 @@ include("kernel/outputs.jl")
 include("nodata.jl")
 include("result.jl")
 include("driver.jl")
+include("blocks.jl")
+
+"""
+    proj_transform(grid_crs, image_crs) -> TransformPair
+
+A [`TransformPair`](@ref) between two CRSs, built with PROJ.
+
+Defined when `Proj` is loaded. A threaded run wants `ProjTransformFactory` from that extension
+instead, so each task builds a transform on its own PROJ context.
+"""
+function proj_transform end
 
 end

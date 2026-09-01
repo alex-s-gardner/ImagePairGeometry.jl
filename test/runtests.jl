@@ -14,4 +14,5 @@ include("npz.jl")
     @time @testset "window" begin include("window.jl") end
     @time @testset "kernel" begin include("kernel.jl") end
     @time @testset "geogrid vs reference" begin include("geogrid.jl") end
+    @time @testset "blocks and threads" begin include("blocks.jl") end
 end
