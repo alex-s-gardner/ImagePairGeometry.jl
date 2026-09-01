@@ -24,6 +24,7 @@ jobs:
       matrix:
         version:
           - '1.10'
+          - '1'
           - 'pre'
         os:
           - ubuntu-latest
@@ -31,6 +32,14 @@ jobs:
           - windows-latest
         arch:
           - x64
+        include:
+          # macOS runners are Apple silicon; x64 Julia is not available there.
+          - version: '1'
+            os: macOS-latest
+            arch: aarch64
+        exclude:
+          - os: macOS-latest
+            arch: x64
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
