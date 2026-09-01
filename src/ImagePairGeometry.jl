@@ -32,11 +32,16 @@ using Extents: Extent
 export ImageFootprint, CoregisteredPair, coregister
 export ProjectedCoordinate, RadarCoordinate
 export MapGrid, footprint_bounds, grid_window
+export IdentityTransform, AffineTransform, TransformPair, transform_pair
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
 include("coordinates.jl")
 include("pair.jl")
 include("grid.jl")
+include("transforms.jl")
+include("kernel/searchrange.jl")
+include("kernel/geometry.jl")
+include("kernel/outputs.jl")
 
 end

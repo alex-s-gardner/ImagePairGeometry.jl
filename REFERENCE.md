@@ -130,6 +130,28 @@ consequences, all reproduced:
 - Chip-size nodata (`0`) is never caught.
 - A genuine stable-surface value of `0`, meaning *not stable*, is read as nodata.
 
+### The y sign convention belongs to the correlator, not the operator
+
+`pixel_offset` returns a displacement along the *image* axes, where `+y` points down a north-up
+raster, while the displacement-to-velocity operator expects `+y` pointing north. The reference
+negates between the two outside geogrid — at `testautoRIFT.py:407` for the prior it supplies, and
+at `:790` for the displacement it receives back. So converting a velocity to pixels and straight
+back through the operator returns `vy` with the sign flipped; I confirmed the reference's own
+arithmetic does the same, returning −240.66 m/yr for an input of +250.
+
+Both are reproduced as they are. A caller pairing this package with a correlator must apply the
+negation, which the `AutoRIFT` extension does in one clearly named place.
+
+### `cross_check` is 90° less the terrain slope angle
+
+For an axis-aligned image the axis unit vectors span the horizontal plane, so their cross product
+is vertical and the angle to the surface normal is exactly the slope. The reference's `> 1.0` gate
+is therefore a rejection of slopes steeper than 89° — unreachable in a real DEM, which is why the
+displacement-to-velocity operator is essentially always computed.
+
+This also bounds the `acos` concern: the openlibm-versus-system-libm difference of one ULP can only
+change an output for a point sitting within a ULP of 89°.
+
 ### The elevation range is inert for every ITS_LIVE projection
 
 `determineBbox` evaluates the footprint at `zrange = [-200, 4000]` to be conservative about
