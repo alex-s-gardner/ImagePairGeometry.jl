@@ -1,0 +1,7 @@
+name = "ImagePairGeometry"
+uuid = "7d3defa8-4bb6-45cf-b5d0-7628f127c0fd"
+authors = ["Alex Gardner <alex.s.gardner@jpl.nasa.gov>", "and contributors"]
+version = "0.1.0-DEV"
+
+[compat]
+julia = "1.10"
