@@ -39,6 +39,7 @@ export pairgeometry, pairgeometry_blocked, npoints, nvalid
 export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
 export proj_transform
+export mapgrid, footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
@@ -63,5 +64,33 @@ Defined when `Proj` is loaded. A threaded run wants `ProjTransformFactory` from 
 instead, so each task builds a transform on its own PROJ context.
 """
 function proj_transform end
+
+"""
+    mapgrid(dem) -> MapGrid
+
+A [`MapGrid`](@ref) describing a raster's grid. Defined when `Rasters` is loaded.
+"""
+function mapgrid end
+
+"""
+    footprint(image) -> ImageFootprint
+
+An [`ImageFootprint`](@ref) describing where a raster sits. Defined when `Rasters` is loaded.
+"""
+function footprint end
+
+"""
+    blocksize_from_chunks(source; floor = 256) -> NTuple{2,Int}
+
+A block size aligned to a raster source's own chunking. Defined when `Rasters` is loaded.
+"""
+function blocksize_from_chunks end
+
+"""
+    write_geotiffs(dir, g::PairGeometry) -> Vector{String}
+
+Write a result as the reference's nine GeoTIFFs. Defined when `Rasters` is loaded.
+"""
+function write_geotiffs end
 
 end
