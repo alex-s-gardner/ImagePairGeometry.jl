@@ -17,7 +17,26 @@ ground distance.
 Radar and Cartesian (e.g. optical) imagery differ in how the forward mapping is obtained —
 orbit state vectors and a DEM for the former, map projection information for the latter — and
 in the unit vectors that define the inverse operator.
+
+The pixel displacement itself is estimated elsewhere, by a feature-tracking or correlation
+routine; this package supplies the geometry that routine searches within and the operator that
+converts its result to velocity.
+
+`REFERENCE.md` records the reference implementation and every deliberate divergence from it.
 """
 module ImagePairGeometry
+
+using StaticArrays: SVector
+using Extents: Extent
+
+export ImageFootprint, CoregisteredPair, coregister
+export ProjectedCoordinate, RadarCoordinate
+export MapGrid, footprint_bounds, grid_window
+
+include("kernel/vecmath.jl")
+include("kernel/rounding.jl")
+include("coordinates.jl")
+include("pair.jl")
+include("grid.jl")
 
 end

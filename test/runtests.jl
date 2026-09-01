@@ -6,5 +6,8 @@ using Aqua
     @testset "Code quality (Aqua.jl)" begin
         Aqua.test_all(ImagePairGeometry)
     end
-    # Write your tests here.
+    @time @testset "rounding" begin include("rounding.jl") end
+    @time @testset "vecmath" begin include("vecmath.jl") end
+    @time @testset "coregister" begin include("coregister.jl") end
+    @time @testset "window" begin include("window.jl") end
 end
