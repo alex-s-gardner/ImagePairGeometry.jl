@@ -64,4 +64,8 @@ Reading: the projection library dominates, so throughput work belongs in making 
 calls — which is what dispatching on `IdentityTransform` does for a same-CRS pair — rather than in
 tuning the arithmetic around them. Two candidates were measured and rejected: batching through
 `proj_trans_generic` is 1.00x (the cost is the projection math, not the call), and PROJ gains nothing
-from sequential over random points, so a row-ordered sweep buys nothing.""")
+from sequential over random points, so a row-ordered sweep buys nothing.
+
+Interpolating the transform on a coarse lattice is the one approach that does pay — 1.63x keeping every
+integer band bitwise, 9.2x if a one-pixel location difference is acceptable. Measured and written up in
+`docs/interpolated-transform.md`; not implemented, because bit-identical output is the default.""")
