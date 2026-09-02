@@ -271,6 +271,36 @@ end
     end
 end
 
+@testset "a file's geotransform is read, not inferred from its sampling" begin
+    # Rasters sets a lookup's sampling from the `AREA_OR_POINT` tag — `Points` for `Point`,
+    # `Intervals{Start}` for `Area` — while reporting the same coordinates either way, namely the
+    # geotransform's. So the tag must not change the grid: both the ITS_LIVE parameter rasters and
+    # the Landsat scenes carry `AREA_OR_POINT=Point`, and inferring "point means center" from that
+    # takes pixel edges for centers and shifts the whole grid half a pixel.
+    gt = (-309247.5, 120.0, 0.0, -2084872.5, 0.0, -120.0)
+    mktempdir() do dir
+        results = Dict{String,Any}()
+        for tag in ("Area", "Point")
+            # Written through the same helper as every other case here, then retagged in place, so
+            # the two files differ in exactly the one metadata item under test.
+            path = write_input(joinpath(dir, "aop_$tag.tif"), fill(1.0, 6, 5), gt, EPSG)
+            let ds = ArchGDAL.GDAL.gdalopen(path, ArchGDAL.GDAL.GA_Update)
+                ArchGDAL.GDAL.gdalsetmetadataitem(ds, "AREA_OR_POINT", tag, C_NULL)
+                ArchGDAL.GDAL.gdalclose(ds)
+            end
+            r = Raster(path; lazy = true)
+            grid = mapgrid(r)
+            fp = ImagePairGeometry.image_footprint(r)
+            @test collect(grid.geotransform) ≈ collect(gt)
+            @test fp.origin[1] ≈ gt[1] + gt[2] / 2
+            @test fp.origin[2] ≈ gt[4] + gt[6] / 2
+            results[tag] = (; grid, fp)
+        end
+        @test results["Area"].grid.geotransform == results["Point"].grid.geotransform
+        @test results["Area"].fp.origin == results["Point"].fp.origin
+    end
+end
+
 @testset "an in-memory raster's locus is read, not assumed" begin
     # A raster built in memory is `Points` sampling, whose coordinates are cell centers — so the
     # geotransform origin is half a pixel outside them.
