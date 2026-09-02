@@ -169,6 +169,27 @@ Modules = [Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)]
 Order = [:type, :function]
 ```
 
+## Correlator handoff
+
+Available when [`AutoRIFT`](https://github.com/alex-s-gardner/AutoRIFT.jl) is loaded, which adds
+`AutoRIFT.pointset(::PairGeometry)` and `velocity_conversion(::PairGeometry)`. The first converts
+the search grid — reindexing to one-based, and turning a nodata point into the zero search radius
+AutoRIFT skips on. The second returns what a `PointSet` has no fields for and downstream velocity
+conversion still needs: the displacement-to-velocity operator, the scale factors, the mask, and the
+chip-size aspect ratio.
+
+`AutoRIFT` is unregistered, so it is a weak dependency with no resolvable version and is absent from
+both the test and docs environments — these functions are neither exercised by CI nor documented
+below. Add a checkout to run them:
+
+```julia
+import Pkg
+Pkg.develop(path = "path/to/AutoRIFT.jl")   # in test/ to run the handoff tests
+```
+
+It must be a revision whose `pointset` accepts `chip_size_min_x`/`chip_size_max_x`; the per-point
+chip-size bounds have nowhere else to go, and no released version has them.
+
 ## Index
 
 ```@index

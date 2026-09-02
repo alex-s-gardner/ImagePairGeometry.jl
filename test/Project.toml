@@ -1,7 +1,6 @@
 [deps]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
-AutoRIFT = "52cb0ed0-aa80-430c-bd04-c52888a79add"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
@@ -14,6 +13,3 @@ Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
 Rasters = "a3a2b9e3-a471-40c9-b274-f788e487c689"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-
-[sources]
-AutoRIFT = {path = "../../AutoRIFT.jl"}

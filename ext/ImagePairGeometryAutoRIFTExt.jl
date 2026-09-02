@@ -22,6 +22,11 @@ module ImagePairGeometryAutoRIFTExt
 # displacement-to-velocity operator, the scale factors, the stable-surface mask and the y chip-size
 # bounds have nowhere to go, and downstream velocity conversion needs them — so they are returned
 # alongside rather than dropped.
+#
+# Version requirement. The per-point chip-size bounds go through `pointset`'s `chip_size_min_x` and
+# `chip_size_max_x` keywords, which exist on no released AutoRIFT. `AutoRIFT` is unregistered, so
+# `[compat]` cannot express the requirement: against a checkout whose `PointSet` lacks those fields
+# this loads and then throws a `MethodError` on the first call.
 
 using ImagePairGeometry
 using ImagePairGeometry: PairGeometry, chip_size_pixels
