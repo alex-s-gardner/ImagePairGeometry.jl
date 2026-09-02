@@ -54,7 +54,9 @@ has stated that a one-pixel search-center difference is acceptable, which for a 
 Interpolating only the *inverse* transform keeps every integer band bitwise exact, because the
 location comes from the forward transform alone. It drops two of the three PROJ calls for 1.63×, and
 confines the approximation to the float bands, where the error is relative and small — 6e-8 on
-`off2vx` at a 240 m lattice, against a Tier B tolerance already set at 4 ULP for compiler contraction.
+`off2vx` at a 240 m lattice, against a Tier B tolerance of 1e-7 relative for reprojected cases.
+Note that this would consume most of that tolerance, which exists to absorb compiler contraction and
+PROJ's platform variation; adopting it means widening the bound rather than fitting inside it.
 
 That asymmetry is the useful finding: the exactness requirement and the cost are on *different*
 transforms.
@@ -67,6 +69,6 @@ transforms.
   lattice is small and its extent is known from the block's own bounds. Per-task ownership, as with
   `ProjTransformFactory`, since it is built from a PROJ transform.
 - Gate it against the exact path, not against the reference: assert the integer bands bitwise and
-  report the float bands' ULP, the way `test/geogrid.jl` already does.
+  report the float bands' relative error, the way `test/geogrid.jl` already does.
 - Report the lattice spacing and the measured worst-case positional error in the result, so a
   consumer can see what it was given.

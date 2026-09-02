@@ -1,9 +1,15 @@
 # Gate: `footprint_bounds` and `grid_window` match the reference.
 #
-# The bounding box is compared bitwise, because it feeds `floor`/`ceil` — one ULP there moves the
-# window a whole point and displaces every output. That makes this the strictest comparison in
-# the package, and the cross-CRS cases are the ones that exercise it: with a real reprojection
-# the bounds are irrational values where agreement is not automatic.
+# The window itself — `pOff`, `lOff`, `pCount`, `lCount` — is compared exactly in every case. It
+# feeds every later output, and one point of shift displaces all of them.
+#
+# The bounding box behind it is compared bitwise only where no reprojection happens. PROJ does not
+# promise bit-identical results across platforms: the same PROJ 9.8.1 returns an easting differing
+# by 2 ULP on x86-64 Linux and Windows from what it returns on aarch64 macOS, since the projection
+# formulae compile to different orderings and libm's transcendentals differ. So cross-CRS bounds get
+# a tolerance, and the exact window assertion is what actually guards the arithmetic: the bounds sit
+# far from a `floor`/`ceil` boundary, so a few ULP cannot move a window edge, while a genuine error
+# in the transcription would move it by whole points.
 
 using ImagePairGeometry
 using ImagePairGeometry: gridspacing, gridorigin, window_geotransform, gridpoint_center,
@@ -50,14 +56,24 @@ end
     bounds = footprint_bounds(tf, coord)
     e = c.expect
 
-    # Bitwise: this value feeds floor/ceil, so a last-bit difference is a whole-pixel shift.
     xlim = parse.(Float64, collect(e.xlim_hex))
     ylim = parse.(Float64, collect(e.ylim_hex))
-    @test bits(bounds.X[1]) == bits(xlim[1])
-    @test bits(bounds.X[2]) == bits(xlim[2])
-    @test bits(bounds.Y[1]) == bits(ylim[1])
-    @test bits(bounds.Y[2]) == bits(ylim[2])
+    got = (bounds.X..., bounds.Y...)
+    want = (xlim..., ylim...)
 
+    if Int(c.image.epsg) == Int(c.dem.epsg)
+        # No reprojection: the bounds are the image corners rearranged, so they are reproducible
+        # bit for bit and any difference is an arithmetic error.
+        @test all(bits.(got) .== bits.(want))
+    else
+        # A reprojection, so PROJ's last bits are platform-dependent. Bounded relative to the
+        # magnitude rather than bitwise, at a tolerance far below one grid step.
+        @test all(abs.(got .- want) .<= 1e-9 .* max.(abs.(want), 1.0))
+    end
+
+    # What the bounds are actually for. `grid_window` floors and ceils them, so this is the
+    # assertion that a transcription error cannot pass — and it holds on every platform, which is
+    # the evidence that the tolerance above is not hiding one.
     window = grid_window(grid, bounds)
     pOff, lOff = first(window).I .- 1
     @test pOff == Int(e.pOff)

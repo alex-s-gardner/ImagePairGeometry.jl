@@ -2,9 +2,9 @@
 #
 # The grid is defined by a DEM: its geotransform sets the point spacing and origin, its CRS sets
 # the projection every output is expressed in. Only the part overlapping the image pair is
-# computed, and finding that part is the most error-sensitive arithmetic in the package — a
-# one-ULP difference in the bounding box shifts the window by a whole pixel through the
-# `floor`/`ceil`, and every output moves with it.
+# computed, and finding that part is the most error-sensitive arithmetic in the package: the bounding
+# box passes through a `floor`/`ceil`, so a bound landing on an integer boundary shifts the window a
+# whole pixel on a one-ULP difference, and every output moves with it.
 #
 # Two steps, deliberately separate because they work in different spaces:
 #

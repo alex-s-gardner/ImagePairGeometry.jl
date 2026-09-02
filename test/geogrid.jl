@@ -3,18 +3,30 @@
 # `reference/gen_geogrid.py` runs the real `GeogridOptical.runGeogrid()` — the C++ extension — and
 # records its nine output rasters. Two tiers, per REFERENCE.md:
 #
-#   Tier A, the Int32 bands: bitwise. A rounding or truncating conversion absorbs any last-bit
-#           difference, so exact agreement is achievable and required.
-#   Tier B, the Float64 bands: bounded in ULP, with the maximum observed reported. The reference is
-#           compiled with floating-point contraction, so it may evaluate `a*b + c` as one `fma`
-#           where Julia rounds twice; transcription cannot close that in general.
+#   Tier A, the Int32 bands: bitwise, in every case. A rounding or truncating conversion absorbs
+#           any last-bit difference, so exact agreement is achievable and required — and it holds on
+#           every platform, which is what establishes that the kernel arithmetic is portable.
+#   Tier B, the Float64 bands: bitwise where the grid and image share a CRS, and bounded in relative
+#           error where they do not.
 #
-# Measured: every band of every same-CRS case agrees bitwise. Only the cross-CRS cases differ, and
-# only in the operator and scale factors — at most 3 ULP, on 3 of 3481 points in the worst case.
-# That the cause is contraction rather than a transcription error was checked directly: inserting
-# `fma` into the determinant cuts the summed ULP error over a whole case by 62% (1148 to 436).
-# Matching the reference's contraction exactly would mean matching its compiler flags, which is
-# not a property worth encoding in the source.
+# Two separate reasons the floats cannot be bitwise under a reprojection.
+#
+# Contraction: the reference is compiled with floating-point contraction, so it may evaluate
+# `a*b + c` as one `fma` where Julia rounds twice. Checked directly — inserting `fma` into the
+# determinant cuts the summed ULP error over a whole case by 62% (1148 to 436). Matching it exactly
+# would mean matching its compiler flags.
+#
+# PROJ is not bit-reproducible across platforms. The same PROJ 9.8.1 returns a projected easting
+# differing by 2 ULP on x86-64 Linux and Windows from aarch64 macOS. The kernel then divides a
+# difference of two such coordinates by the pixel spacing, and at ITS_LIVE scale `|x|/spacing` is
+# around 8e4, so a 2-ULP input difference emerges as ~1e4 ULP in a unit vector — 2e-8 absolute on a
+# value near 12. Large in ULP, negligible in magnitude: about 2e-9 relative, which is nanometers
+# per pixel of ground distance.
+#
+# Hence a relative bound rather than a ULP bound for the cross-CRS cases. A ULP count is the right
+# metric for a value both sides compute from identical inputs, and the wrong one when the inputs
+# themselves differ in their last bits. The exactness that does the real work is Tier A plus the
+# same-CRS bitwise floats.
 
 using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, REFERENCE_FILES, nodata_from, xsize, ysize
@@ -24,18 +36,6 @@ using Test
 
 const GFIX = JSON3.read(read(joinpath(@__DIR__, "reference", "geogrid.json"), String))
 const GARR = load_npz(joinpath(@__DIR__, "reference", "geogrid_arrays.npz"))
-
-"""ULP distance between two Float64s, `0` when equal, `typemax` when only one is finite."""
-function ulpdist(a::Float64, b::Float64)
-    a === b && return 0
-    (isnan(a) && isnan(b)) && return 0
-    (isfinite(a) && isfinite(b)) || return typemax(Int)
-    ia = reinterpret(Int64, a); ib = reinterpret(Int64, b)
-    # Map to a monotone ordering so the comparison works across zero.
-    ia < 0 && (ia = typemin(Int64) - ia)
-    ib < 0 && (ib = typemin(Int64) - ib)
-    return abs(ia - ib)
-end
 
 """Reference geometry for one fixture case, computed by this package."""
 function run_case(c)
@@ -59,11 +59,25 @@ refband(name, file, band) = GARR["$name/$file/band$band"]
     @info "geogrid fixture provenance" autorift = p.autorift_version gdal = p.gdal_version proj = p.proj_version
 end
 
-"""Largest ULP difference tolerated on a float band, set from the measured worst case."""
-const FLOAT_ULP_BOUND = 4
+"""Relative difference between two Float64s, scaled by the larger magnitude. `0` when equal."""
+function reldist(a::Float64, b::Float64)
+    a === b && return 0.0
+    (isnan(a) && isnan(b)) && return 0.0
+    (isfinite(a) && isfinite(b)) || return Inf
+    return abs(a - b) / max(abs(a), abs(b), 1.0)
+end
 
-const MAXULP = Ref(0)
-const ULPWORST = Ref(("", "", 0))
+"""
+Largest relative difference tolerated on a float band under a reprojection.
+
+Set well above the measured worst case (~2e-9) and far below anything that could matter: the float
+bands convert a pixel displacement to a velocity, so this is nanometers per year against values in
+meters per year.
+"""
+const FLOAT_REL_BOUND = 1e-7
+
+const MAXREL = Ref(0.0)
+const RELWORST = Ref(("", "", 0.0))
 
 @testset "$(c.name)" for c in GFIX.cases
     r, win, coord, grid, tf = run_case(c)
@@ -104,15 +118,22 @@ const ULPWORST = Ref(("", "", 0))
                     @test all(w -> w == trunc(w), want)
                     @test got == Int32.(want)
                 end
+            elseif Int(c.image.epsg) == Int(c.dem.epsg)
+                # Tier B, same CRS: no PROJ call, so the only inputs are the fixture's own numbers
+                # and agreement is exact. Contraction cannot bite here because the identity path
+                # computes the axis vectors in closed form rather than summing products.
+                @testset "$file band $bi ($f) bitwise" begin
+                    @test all(reinterpret(UInt64, got) .== reinterpret(UInt64, want))
+                end
             else
-                # Tier B: ULP-bounded, tracking the worst case across every band and case.
-                d = maximum(ulpdist.(got, want))
-                if d > MAXULP[]
-                    MAXULP[] = d
-                    ULPWORST[] = (String(c.name), "$file band $bi ($f)", d)
+                # Tier B, reprojected: relative, tracking the worst case across every band and case.
+                d = maximum(reldist.(got, want))
+                if d > MAXREL[]
+                    MAXREL[] = d
+                    RELWORST[] = (String(c.name), "$file band $bi ($f)", d)
                 end
                 @testset "$file band $bi ($f) within tolerance" begin
-                    @test d <= FLOAT_ULP_BOUND
+                    @test d <= FLOAT_REL_BOUND
                 end
             end
         end
@@ -149,11 +170,12 @@ end
 end
 
 @testset "float agreement summary" begin
-    # Reported, not just asserted: the margin is the evidence for the 2-ULP bound rather than a
-    # number chosen in advance.
-    @info "worst float-band agreement" max_ulp = MAXULP[] bound = FLOAT_ULP_BOUND case = ULPWORST[][1] band = ULPWORST[][2]
-    @test MAXULP[] <= FLOAT_ULP_BOUND
-    # The bound is not slack to grow into: same-CRS cases are bitwise, so a regression there shows
-    # up as a nonzero maximum long before it reaches the bound.
-    @test MAXULP[] >= 0
+    # Reported, not just asserted: the margin is the evidence for the bound rather than a number
+    # chosen in advance, and it is what would show a platform drifting further than expected.
+    @info "worst reprojected float-band agreement" max_rel = MAXREL[] bound = FLOAT_REL_BOUND case = RELWORST[][1] band = RELWORST[][2]
+    @test MAXREL[] <= FLOAT_REL_BOUND
+    # The bound is not slack to grow into. Same-CRS float bands are asserted bitwise above, so a
+    # regression in the arithmetic itself fails there rather than eating into this margin — what
+    # remains here is PROJ's platform variation, which is orders of magnitude below the bound.
+    @test MAXREL[] >= 0
 end

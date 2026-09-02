@@ -33,7 +33,9 @@ committed, so the test suite runs with no Python, no network, and no large data.
 records the versions it was generated against; the tests assert the PROJ version, because
 projection formulae are stable but `proj_create_crs_to_crs`'s *operation selection* is not.
 
-`Proj.jl` here resolves to PROJ 9.8.1 as well, so PROJ is not a source of divergence.
+`Proj.jl` here resolves to PROJ 9.8.1 as well, so the two sides agree on operation selection and on
+the projection formulae. They do not agree on the last bit: PROJ makes no bit-reproducibility
+promise across platforms, and does not deliver one — see Tier B below.
 
 ## Exactness standard
 
@@ -45,30 +47,48 @@ Two tiers, because they are achievable to different degrees:
 any last-bit difference, so exact agreement is both achievable and asserted by comparing bit
 patterns.
 
-**Tier B — bounded in ULP.** The Float64 outputs: `window_rdr_off2vel_x_vec`,
-`window_rdr_off2vel_y_vec`, `window_scale_factor`. The reference is compiled with floating-point
-contraction enabled, so the C++ may evaluate `a*b + c` as a single `fma` with one rounding where
-Julia performs two. Careful transcription cannot close that gap in general.
+**Tier B — bitwise where no reprojection happens, relative otherwise.** The Float64 outputs:
+`window_rdr_off2vel_x_vec`, `window_rdr_off2vel_y_vec`, `window_scale_factor`.
 
 Measured across the ten fixture cases:
 
 | case group | agreement |
 |---|---|
 | same CRS (identity transform) | **bitwise on every band** |
-| cross CRS (32624→3413, 32719→3031) | ≤ 3 ULP; at most 3 of 3481 points exceed 2 ULP |
+| cross CRS (32624→3413, 32719→3031) | ≤ 1e-7 relative; 4e-16 observed on aarch64 macOS, 2e-9 on x86-64 Linux |
 
 Every *integer* band is bitwise in all ten cases, cross-CRS included — the rounding absorbs the
-difference, which is why the tiers split where they do.
+difference, which is why the tiers split where they do. That also establishes that the kernel
+arithmetic itself is portable: the same integer bit patterns come out on Linux, Windows and macOS.
 
-That contraction is the cause, rather than a transcription error, was checked directly: inserting
-`fma` into the determinant reduces the summed ULP error over a whole case by 62%, from 1148 to 436.
-Matching the reference bit for bit here would mean matching its compiler's contraction decisions,
-making the source brittle to the reference's build flags for no gain in correctness. The bound is
-asserted at 4 ULP, with the observed maximum reported on every run.
+Two independent reasons the reprojected floats cannot be bitwise.
 
-Intermediate values that feed a `floor`, `ceil` or comparison are held to Tier A regardless of
-type — a one-ULP difference in the footprint bounding box shifts the grid window by a whole point
-and displaces every output.
+*Contraction.* The reference is compiled with floating-point contraction enabled, so the C++ may
+evaluate `a*b + c` as a single `fma` with one rounding where Julia performs two. That this is a real
+cause rather than a transcription error was checked directly: inserting `fma` into the determinant
+reduces the summed ULP error over a whole case by 62%, from 1148 to 436. Matching the reference bit
+for bit here would mean matching its compiler's contraction decisions, making the source brittle to
+the reference's build flags for no gain in correctness.
+
+*PROJ is not bit-reproducible across platforms.* The same PROJ 9.8.1 returns a projected easting
+differing by 2 ULP on x86-64 Linux and Windows from what it returns on aarch64 macOS — different
+instruction selection in the projection formulae, and a different libm for the transcendentals. The
+kernel then divides a difference of two projected coordinates by the pixel spacing, and at ITS_LIVE
+scale `|x| / spacing ≈ 8e4`, so 2 ULP of input emerges as roughly 1e4 ULP in an axis unit vector.
+That sounds severe stated in ULP and is negligible stated in magnitude: 2e-8 absolute on a value
+near 12, i.e. about 2e-9 relative — nanometers per year on a velocity in meters per year.
+
+So the cross-CRS float bands are bounded relatively, at 1e-7, with the observed maximum reported on
+every run. A ULP count is the right metric when both sides compute from identical inputs and the
+wrong one when the inputs differ in their last bits; the exactness that carries the weight is Tier A
+plus the same-CRS bitwise floats, both of which hold on every platform.
+
+Intermediate values that feed a `floor`, `ceil` or comparison get the strictest treatment their
+inputs permit. The footprint bounding box is compared bitwise for same-CRS cases and to 1e-9
+relative for reprojected ones; what is asserted exactly in every case is the grid window it
+produces, since that is the quantity a shift would corrupt — and the bounds sit far enough from a
+`floor`/`ceil` boundary that PROJ's last bits cannot move an edge, while a transcription error would
+move it by whole points.
 
 ## Deliberate divergences
 
