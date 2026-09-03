@@ -95,8 +95,10 @@ function geo2rdr(orbit::Orbit, target::SVector{3,Float64},
     aztime = aztime0
     orbittime = orbittime0
 
-    # Declared outside the loop because they are read after it, in the state the final iteration
-    # left them — one step behind the times. See `RadarPoint`.
+    # Both are read after the loop, in the state its final iteration left them — one step behind the
+    # times, since the loop updates the time and re-interpolates without recomputing them. See
+    # `RadarPoint`. The initial values are never observed: iteration one overwrites them before any
+    # read, and `GEO2RDR_ITERATIONS` is nonzero.
     look = target - satx
     rngpix = norm3(look)
 

@@ -163,26 +163,38 @@ function interpolate(o::Orbit, t::Real)
 
     idx = _hermite_index(o, tt)
 
-    # Time offsets to the four nodes. `f1` is the offset itself; `f0` corrects the position weight
-    # for the derivative constraint at each node.
-    f1 = ntuple(i -> tt - statetime(o, idx + i - 1), 4)
+    # The four node times, evaluated once. `statetime` is `t0 + (i - 1) * spacing`, so recomputing it
+    # inside the weight loops below — around 150 times per call — costs a multiply-add each and cannot
+    # give a different answer.
+    tn = ntuple(i -> statetime(o, idx + i - 1), 4)
 
-    f0 = ntuple(4) do i
+    # Reciprocal node separations, and their row sums. `f0` and `g0` each need the same sum over
+    # `j != i`, so it is formed once in the same order both would have used.
+    sepsum = ntuple(4) do i
         s = 0.0
         for j in 1:4
             j == i && continue
-            s += 1.0 / (statetime(o, idx + i - 1) - statetime(o, idx + j - 1))
+            s += 1.0 / (tn[i] - tn[j])
         end
-        return 1.0 - 2.0 * s * f1[i]
+        return s
     end
 
+    # Time offsets to the four nodes. `f1` is the offset itself; `f0` corrects the position weight
+    # for the derivative constraint at each node.
+    f1 = ntuple(i -> tt - tn[i], 4)
+
+    f0 = ntuple(i -> 1.0 - 2.0 * sepsum[i] * f1[i], 4)
+
     # Lagrange basis over the four nodes.
+    #
+    # `hdot` below recomputes these same ratios. Hoisting them into a 4×4 table is bit-identical but
+    # measured 6% *slower* — twelve stack slots cost more than the divisions they save, and the
+    # divisions were already in flight behind the multiply chain.
     h = ntuple(4) do i
         p = 1.0
         for j in 1:4
             j == i && continue
-            p *= (tt - statetime(o, idx + j - 1)) /
-                 (statetime(o, idx + i - 1) - statetime(o, idx + j - 1))
+            p *= (tt - tn[j]) / (tn[i] - tn[j])
         end
         return p
     end
@@ -197,11 +209,10 @@ function interpolate(o::Orbit, t::Real)
         acc = 0.0
         for j in 1:4
             j == i && continue
-            prod = 1.0 / (statetime(o, idx + i - 1) - statetime(o, idx + j - 1))
+            prod = 1.0 / (tn[i] - tn[j])
             for k in 1:4
                 (k == i || k == j) && continue
-                prod *= (tt - statetime(o, idx + k - 1)) /
-                        (statetime(o, idx + i - 1) - statetime(o, idx + k - 1))
+                prod *= (tt - tn[k]) / (tn[i] - tn[k])
             end
             acc += prod
         end
@@ -210,14 +221,7 @@ function interpolate(o::Orbit, t::Real)
 
     g1 = ntuple(i -> h[i] + 2.0 * hdot[i] * f1[i], 4)
 
-    g0 = ntuple(4) do i
-        s = 0.0
-        for j in 1:4
-            j == i && continue
-            s += 1.0 / (statetime(o, idx + i - 1) - statetime(o, idx + j - 1))
-        end
-        return 2.0 * (f0[i] * hdot[i] - s * h[i])
-    end
+    g0 = ntuple(i -> 2.0 * (f0[i] * hdot[i] - sepsum[i] * h[i]), 4)
 
     vel = SVector{3,Float64}(0.0, 0.0, 0.0)
     for i in 1:4

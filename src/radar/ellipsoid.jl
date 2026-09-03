@@ -63,7 +63,14 @@ Semi-minor axis, `a * sqrt(1 - e2)` (`Ellipsoid.h:41`).
 
 Prime vertical radius of curvature at geodetic latitude `lat` in radians (`Ellipsoid.h:150-153`).
 """
-@inline r_east(el::Ellipsoid, lat::Float64) = el.a / sqrt(1.0 - (el.e2 * sin(lat)^2))
+@inline r_east(el::Ellipsoid, lat::Float64) = r_east_sin(el, sin(lat))
+
+"""
+    r_east_sin(el::Ellipsoid, slat) -> Float64
+
+[`r_east`](@ref) from an already-computed `sin(lat)`, for a caller that needs the sine anyway.
+"""
+@inline r_east_sin(el::Ellipsoid, slat::Float64) = el.a / sqrt(1.0 - (el.e2 * slat^2))
 
 """
     lonlat_to_xyz(el::Ellipsoid, llh) -> SVector{3,Float64}
@@ -74,11 +81,16 @@ Transcribed from `Ellipsoid.h:195-208`.
 """
 @inline function lonlat_to_xyz(el::Ellipsoid, llh::SVector{3,Float64})
     lon, lat, h = llh[1], llh[2], llh[3]
-    re = r_east(el, lat)
+    # `sincos` returns the pair in one call. Each value is bit-identical to the separate `sin`/`cos`
+    # it replaces — and `sin(lat)` is needed twice, once for the prime vertical radius and once for
+    # the z component, where the reference also evaluates it twice.
+    slat, clat = sincos(lat)
+    slon, clon = sincos(lon)
+    re = r_east_sin(el, slat)
     return SVector{3,Float64}(
-        (re + h) * cos(lat) * cos(lon),
-        (re + h) * cos(lat) * sin(lon),
-        ((re * (1.0 - el.e2)) + h) * sin(lat),
+        (re + h) * clat * clon,
+        (re + h) * clat * slon,
+        ((re * (1.0 - el.e2)) + h) * slat,
     )
 end
 
@@ -116,8 +128,13 @@ a range or azimuth index for a point already within 2e-10 of a rounding boundary
     e4 = e2 * e2
     a2 = el.a * el.a
 
+    # Squared lateral distance, needed here and again for `d` below. The reference spells
+    # `std::pow(xyz[0], 2) + std::pow(xyz[1], 2)` out at both sites; one evaluation gives the same
+    # value, since each was already deterministic.
+    lat2 = x^2 + y^2
+
     # Lateral and polar distances, normalized by the axes.
-    p = (x^2 + y^2) / a2
+    p = lat2 / a2
     q = ((1.0 - e2) * z^2) / a2
     r = (p + q - e4) / 6.0
     s = (e4 * p * q) / (4.0 * r^3)
@@ -126,7 +143,7 @@ a range or azimuth index for a point already within 2e-10 of a rounding boundary
     rv = sqrt(u^2 + (e4 * q))
     w = (e2 * (u + rv - q)) / (2.0 * rv)
     k = sqrt(u + rv + w^2) - w
-    d = (k * sqrt(x^2 + y^2)) / (k + e2)
+    d = (k * sqrt(lat2)) / (k + e2)
 
     return SVector{3,Float64}(
         atan(y, x),
