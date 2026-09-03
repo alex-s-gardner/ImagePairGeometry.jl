@@ -63,6 +63,9 @@ include("grid.jl")
 include("radar/coordinate.jl")
 include("kernel/searchrange.jl")
 include("kernel/geometry.jl")
+# After `kernel/geometry.jl`: the radar `pointgeometry` method returns the `PointGeometry` defined
+# there, and uses its `DEG2RAD`.
+include("radar/geometry.jl")
 include("kernel/outputs.jl")
 include("nodata.jl")
 include("result.jl")
