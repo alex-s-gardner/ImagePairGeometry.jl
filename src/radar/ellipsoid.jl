@@ -111,12 +111,13 @@ the reference's is the platform libm's, and the two disagree in the last bit for
 Everything upstream of them is bitwise, so this is a library difference and not a transcription
 difference.
 
-openlibm is kept deliberately. Neither library is correctly rounded — against a 256-bit evaluation of
-the same expressions, openlibm is closer on one fixture case, the platform libm on three, and they
-agree on the rest — so switching would not buy accuracy, only agreement with one machine's libm. What
-it would cost is the property this package can actually guarantee: openlibm returns the same value on
-every platform, and `REFERENCE.md` records that the reference's own floats do not. Matching macOS's
-last bit would make this code platform-dependent *and* still not match the reference on Linux.
+openlibm is kept deliberately, and `atan2` being platform-dependent is the reason rather than an
+obstacle to it. The reference's own angles differ between platforms — the libm that produced the
+committed fixture (aarch64 macOS) disagrees with the one on x86-64 Linux and Windows, where the system
+function agrees with openlibm instead. So there is no single "reference last bit" to match. Both
+implementations are faithful and neither is correctly rounded, measured against a 256-bit evaluation,
+so switching would trade a guarantee — openlibm returns the same value on every platform — for
+agreement with whichever machine happens to be running.
 
 The magnitude that matters is not the ULP count but what it does downstream: one ULP of angle at
 these latitudes is 5e-10 m of position, against a range sample of about 2.3 m. So it can only change

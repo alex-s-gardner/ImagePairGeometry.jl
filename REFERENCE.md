@@ -249,20 +249,26 @@ every run.
 
 Two causes, both established by measurement rather than inferred.
 
-*`atan2` is not the same function in both.* Julia's `atan` is openlibm's and the reference's resolves
-to the platform libm's; they differ in the last bit for some arguments — 2 of the 12 ellipsoid
-fixture cases. Confirmed by calling the system `atan2` through `ccall`, which reproduces the
-fixture's longitude bitwise on every case. Everything upstream of the two `atan2` calls is bitwise,
-which is why the height — computed without inverse trigonometry — is bitwise throughout.
+*`atan2` is not the same function in both, and is not the same function across platforms.* Julia's
+`atan` is openlibm's; the reference's resolves to whatever libm its machine provides. They differ in
+the last bit for some arguments — 2 of the 12 ellipsoid fixture cases on the machine that generated
+the fixture.
 
-openlibm is kept rather than `ccall`ing the platform function, and the reason is measured: neither
-library is correctly rounded. Against a 256-bit evaluation of the same expressions, openlibm is nearer
-the true value on one fixture case, the platform libm on three, and they agree on the rest — both are
-faithful to within one ULP and neither dominates. Switching would therefore buy agreement with one
-machine's libm rather than accuracy, and would give up the one guarantee available here: openlibm
-returns the same value on every platform. Since PROJ already denies this package bit-reproducibility
-across platforms on the projected path, adding a second source of platform dependence to gain the last
-bit on macOS — while still missing it on Linux — is the worse trade.
+That fixture was generated on aarch64 macOS, and its system `atan2` reproduces the recorded longitude
+bitwise there. On x86-64 Linux and Windows the system function agrees with **openlibm** instead, and
+so differs from the fixture. Measured on CI, not inferred: an assertion that the system libm matches
+the fixture passes on macOS and fails on both others.
+
+So there is no single reference last bit to match — the same situation PROJ creates on the projected
+path, arriving here through a different library. openlibm is kept because it is the one thing that
+*is* invariant: the same value on every platform. Both implementations are faithful — within one ULP
+of a 256-bit evaluation — and neither is correctly rounded, so switching would trade that guarantee
+for agreement with whichever machine happens to be running.
+
+What localizes the difference to `atan2` rather than the transcription, on every platform: the height
+is computed from `k`, `d` and `z` with no inverse trigonometry, and it is bitwise everywhere. Every
+term upstream of the two `atan2` calls therefore agrees exactly, and a transcription error would have
+moved the height too.
 
 *Contraction reaches the Hermite velocity through a cancellation.* isce3 is compiled with
 floating-point contraction; Julia rounds each operation. The velocity weight `g0` is

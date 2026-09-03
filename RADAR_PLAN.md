@@ -440,13 +440,13 @@ cases, and the "Not yet implemented" section removed. `docs/src/index.md` and `R
 
 Resolved since the plan was written:
 
-- **The `atan2` gap stays open, deliberately.** Against a 256-bit evaluation neither library is
-  correctly rounded: openlibm is nearer on one fixture case, the platform libm on three, and they
-  agree on the rest. So `ccall`ing the system function would buy agreement with one machine rather
-  than accuracy, while giving up the cross-platform reproducibility openlibm exists to provide — and
-  `REFERENCE.md` already records that the reference's own floats are not bit-reproducible across
-  platforms, so it would not match the reference on Linux either. Asserted in
-  `test/radar_numerics.jl`, which will fail if the comparison ever becomes one-sided.
+- **The `atan2` gap stays open, and CI settled why.** The question was whether `ccall`ing the platform
+  libm would close it. It would not: `atan2` is itself platform-dependent. The fixture's angles come
+  from aarch64 macOS's libm, and on x86-64 Linux and Windows the system function agrees with openlibm
+  instead — so an assertion that the system libm matches the fixture passes on macOS and fails on both
+  others, which is exactly what the first CI run showed. There is no single reference last bit to
+  match. Both implementations are faithful and neither is correctly rounded against a 256-bit
+  evaluation, so openlibm is kept for the one property that is invariant: the same value everywhere.
 - `CoregisteredPair` widens to hold any `AbstractImageCoordinate` — see *No coregistration on the
   radar path*.
 - The y-sign negation is radar-only and dispatches — see CHUNK-010.
