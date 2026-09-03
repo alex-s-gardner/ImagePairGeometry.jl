@@ -34,7 +34,9 @@ All arrays share the axes of the grid window the result was computed over.
 - `scale_x`, `scale_y`: ratio of true ground distance to nominal pixel spacing.
 
 # Metadata
-- `geotransform`, `crs`: georeferencing of the window.
+- `geotransform`, `crs`: georeferencing of the window. The CRS is a
+  `GeoFormatTypes.GeoFormat` or `nothing`, inherited from the grid; read it with
+  `GeoInterface.crs`.
 - `window`: the grid indices covered.
 - `nodata`: the policy the sentinels come from.
 
@@ -164,6 +166,8 @@ function reference_files(g::PairGeometry)
     sentinel = g.nodata.output
     return all(==(sentinel), g.off2vx_dr) ? REFERENCE_FILES : RADAR_REFERENCE_FILES
 end
+
+GeoInterface.crs(r::PairGeometry) = r.crs
 
 Base.size(r::PairGeometry) = size(r.location_x)
 Base.axes(r::PairGeometry) = axes(r.location_x)

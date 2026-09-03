@@ -22,7 +22,9 @@ The grid the geometry is computed on, defined by a DEM.
   *outer corner* of the first pixel — not its center. Rotation terms `rx`/`ry` must be zero;
   the reference assumes a north-up grid throughout and its index arithmetic is wrong otherwise.
 - `size`: `(ncolumns, nrows)` of the DEM.
-- `crs`: the projection, or `nothing`. Carried for output metadata; the transform used in the
+- `crs`: the projection as a `GeoFormatTypes.GeoFormat`, or `nothing`. An `Integer` is taken as an
+  EPSG code and converted, so `crs = 32624` and `crs = GFT.EPSG(32624)` are the same thing. Read it
+  back with `GeoInterface.crs`. Carried for output metadata; the transform used in the
   computation is passed separately, so this is not consulted during the kernel.
 
 Grid point centers are at `x₀ + (i + 0.5) * dx`, matching the reference
@@ -47,6 +49,7 @@ struct MapGrid{T<:Real,C}
 end
 
 function MapGrid(geotransform::NTuple{6}, size::NTuple{2,Integer}, crs = nothing)
+    crs = _as_geoformat(crs)
     T = promote_type(map(typeof, geotransform)...)
     return MapGrid{T,typeof(crs)}(T.(geotransform), Int.(size), crs)
 end
@@ -83,6 +86,17 @@ identical at any height, so for imagery and grids on WGS84 — UTM, EPSG:3413, E
 every ITS_LIVE projection — this range widens nothing.
 """
 const DEFAULT_ZRANGE = (-200.0, 4000.0)
+
+"""
+    GeoInterface.crs(g::MapGrid)
+    GeoInterface.crs(r::PairGeometry)
+
+The projection as a `GeoFormatTypes.GeoFormat`, or `nothing` if none was given.
+
+The GeoJulia accessor, so a consumer reads the CRS the same way here as from a `Raster` or a geometry
+rather than reaching for the field. A result inherits its grid's.
+"""
+GeoInterface.crs(g::MapGrid) = g.crs
 
 """
     footprint_bounds(transform, c::ProjectedCoordinate; zrange = DEFAULT_ZRANGE) -> Extent
