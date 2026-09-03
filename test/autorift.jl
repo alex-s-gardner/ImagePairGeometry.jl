@@ -137,7 +137,8 @@ end
 
     # The chip aspect ratio the reference derives as `ScaleChipSizeY`.
     @test c.chip_scale_y == 1.5        # csminy 360 over csminx 240
-    @test velocity_conversion(ar_case(csminy = 240.0)[1]; coordinate = ProjectedCoordinate(origin = (300000.0, 7800000.0), spacing = (30.0, -30.0), size = (400, 400))).chip_scale_y == 1.0
+    eq = ar_case(csminy = 240.0)
+    @test velocity_conversion(eq[1]; coordinate = eq[3].coordinate).chip_scale_y == 1.0
 
     # The mask is boolean, and false wherever the point is invalid.
     @test eltype(c.stable_surface) === Bool
@@ -146,7 +147,8 @@ end
     @test all(c.stable_surface[findall(!=(sentinel), r.location_x)])
 
     # A mask of zeros means nothing is stable, not that the band is missing.
-    @test !any(velocity_conversion(ar_case(ssm = 0.0)[1]; coordinate = ProjectedCoordinate(origin = (300000.0, 7800000.0), spacing = (30.0, -30.0), size = (400, 400))).stable_surface)
+    ns = ar_case(ssm = 0.0)
+    @test !any(velocity_conversion(ns[1]; coordinate = ns[3].coordinate).stable_surface)
 end
 
 @testset "velocity reconstruction round-trips" begin

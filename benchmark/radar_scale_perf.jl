@@ -92,7 +92,9 @@ let
     println("interpolating the answer itself.")
 end
 
-# Whole-window cost, and what threading buys.
+# Whole-window cost, and what threading buys. The per-point figure from the first grid is kept for the
+# extrapolation at the end rather than measured a second time.
+per_point = Ref(0.0)
 println("\n", rpad("grid", 14), lpad("points", 9), lpad("serial ms", 12), lpad("ms/point", 11))
 for (n, spacing) in ((48, 500.0), (96, 250.0))
     grid, win, inputs = scene(n, spacing)
@@ -101,6 +103,7 @@ for (n, spacing) in ((48, 500.0), (96, 250.0))
     run1() = pairgeometry(grid, PAIR, inputs; transform = projpair(), window = win,
                           nodata = nodata_from(0.0))
     t = minimum(@benchmark $run1() samples = 5 evals = 1).time
+    n == 48 && (per_point[] = t / length(win))
     println(rpad("$(n)x$(n) @ $(Int(spacing))m", 14), lpad(length(win), 9),
             lpad(round(t / 1e6; digits = 1), 12),
             lpad(round(t / length(win) / 1e3; digits = 2), 11))
@@ -127,11 +130,7 @@ end
 
 # What a production-scale run would cost, from the measured per-point figure.
 let
-    grid, win, inputs = scene(48, 500.0)
-    run1() = pairgeometry(grid, PAIR, inputs; transform = projpair(), window = win,
-                          nodata = nodata_from(0.0))
-    t = minimum(@benchmark $run1() samples = 5 evals = 1).time
-    per = t / length(win)
+    per = per_point[]
     println("\nAt ", round(per / 1e3; digits = 2), " us/point, one thread:")
     for (nm, npts) in ("a 5000x5000 grid" => 25_000_000,
                        "an ITS_LIVE tile, 915x915 at 120 m" => 915^2)

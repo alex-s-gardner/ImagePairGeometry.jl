@@ -85,6 +85,14 @@ function run_radar_case(c)
     return (r_out, win, coord, grid, tf)
 end
 
+# Every case, computed once. Each testset below reads the same eight results rather than recomputing
+# them: the kernel is the expensive part of this file, and running it once per testset per case was
+# about seventy runs where eight suffice.
+const RESULTS = Dict(String(c.name) => run_radar_case(c) for c in GFIX.cases)
+
+"""Cached geometry for a fixture case."""
+radar_case(c) = RESULTS[String(c.name)]
+
 """The reference's band for `file`/`band`, oriented to match this package's arrays.
 
 No transpose: `parse_npy` already reads the C-order buffer into a Julia array whose first index is the
@@ -112,7 +120,7 @@ end
     # the fixture more tightly. What *is* checked at full precision is the output bands they produce,
     # below — the chip-size bands divide by these, and they are Tier A bitwise.
     for c in GFIX.cases
-        _, _, coord, _, _ = run_radar_case(c)
+        _, _, coord, _, _ = radar_case(c)
         s = c.scalars
         # Ground range and azimuth pixel size, recovered from geometry rather than a geotransform.
         @test xsize(coord) ≈ gx(s.X_res) rtol = 1e-5
@@ -134,7 +142,7 @@ end
     tolerant = (:location_y, :search_y, :offset_x, :offset_y, :search_x)
     worst = Dict{String,Tuple{Int,Int}}()
     for c in GFIX.cases
-        r, win, _, _, _ = run_radar_case(c)
+        r, win, _, _, _ = radar_case(c)
         for (file, fields) in reference_files(r)
             c.outputs[Symbol(file)] === nothing && continue
             fields[1] in INT_BANDS || continue
@@ -166,7 +174,7 @@ end
     max_where = ""
     per_band = Dict{String,Tuple{Int,Float64}}()
     for c in GFIX.cases
-        r, _, _, _, _ = run_radar_case(c)
+        r, _, _, _, _ = radar_case(c)
         for (file, fields) in reference_files(r)
             ref = c.outputs[Symbol(file)]
             ref === nothing && continue
@@ -219,7 +227,7 @@ end
     # placed just inside the swath and this package places just outside would differ by a whole band
     # of sentinels rather than by a last bit.
     for c in GFIX.cases
-        r, _, _, _, _ = run_radar_case(c)
+        r, _, _, _, _ = radar_case(c)
         want = refband(c.name, "window_location.tif", 1)
         got = r.location_x
         @test count(==(-32767), Int32.(want)) == count(==(Int32(-32767)), got)
@@ -229,7 +237,7 @@ end
 
 @testset "off2vel files have three bands" begin
     for c in GFIX.cases
-        r, _, _, _, _ = run_radar_case(c)
+        r, _, _, _, _ = radar_case(c)
         files = reference_files(r)
         c.has_full_inputs || continue
         @test files === RADAR_REFERENCE_FILES
@@ -245,7 +253,7 @@ end
     # Agreeing on *which* points fall outside is a stronger check than agreeing on the values inside:
     # a systematic error in the solve would move the swath edge, not just the last bits.
     c = only(filter(x -> x.name == "oversize", collect(GFIX.cases)))
-    r, _, _, _, _ = run_radar_case(c)
+    r, _, _, _, _ = radar_case(c)
     want = Int32.(refband(c.name, "window_location.tif", 1))
 
     outside_ref = want .== Int32(-32767)
@@ -269,7 +277,7 @@ end
     @test !("window_offset.tif" in present)
     @test !("window_search_range.tif" in present)
 
-    r, _, _, _, _ = run_radar_case(c)
+    r, _, _, _, _ = radar_case(c)
     # Our result agrees: those bands are all sentinel, and the ones the reference wrote are not.
     @test all(==(Int32(-32767)), r.offset_x)
     @test all(==(Int32(-32767)), r.search_x)
@@ -284,7 +292,7 @@ end
     disagree = 0
     total = 0
     for c in GFIX.cases
-        r, _, _, _, _ = run_radar_case(c)
+        r, _, _, _, _ = radar_case(c)
         c.outputs[Symbol("window_rdr_off2vel_x_vec.tif")] === nothing && continue
         want = refband(c.name, "window_rdr_off2vel_x_vec.tif", 1)
         for k in eachindex(r.off2vx_dx, want)
@@ -303,7 +311,7 @@ end
     # be bitwise identical to a serial whole-window one. Block sizes that do not divide the window are
     # included deliberately: an off-by-one in the block-to-window offset would show up there first.
     c = only(filter(x -> x.name == "utm32n", collect(GFIX.cases)))
-    ref, win, coord, grid, _ = run_radar_case(c)
+    ref, win, coord, grid, _ = radar_case(c)
     pair = CoregisteredPair(coord; dt = Float64(c.dt))
     src = InMemoryInputs(fixture_inputs(GARR, c, win), win)
     factory() = TransformPair(

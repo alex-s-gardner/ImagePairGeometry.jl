@@ -136,7 +136,7 @@ function pairgeometry(grid::MapGrid, pair::CoregisteredPair, inputs::GeometryInp
                       nodata::NoDataPolicy = nodata_from(nothing))
     tf = _resolve_transform(transform)
     coord = pair.coordinate
-    win = window === nothing ? grid_window(grid, _default_bounds(tf, coord)) : window
+    win = window === nothing ? grid_window(grid, footprint_bounds(tf, coord)) : window
 
     size(inputs.dem) == size(win) || throw(DimensionMismatch(
         "GeometryInputs arrays are $(size(inputs.dem)) but the window is $(size(win)); the " *
@@ -146,14 +146,6 @@ function pairgeometry(grid::MapGrid, pair::CoregisteredPair, inputs::GeometryInp
     _fill_geometry!(result, grid, coord, pair.dt, inputs, tf, params, nodata, win)
     return result
 end
-
-# The footprint's transform direction, per coordinate system.
-#
-# A projected footprint is bounded by transforming the image's own corners, which are in image
-# coordinates. A radar footprint is solved for, and `rdr2geo` produces geodetic degrees, so it needs
-# the direction that takes those to the grid — `tf.inverse`.
-_default_bounds(tf::TransformPair, coord::ProjectedCoordinate) = footprint_bounds(tf.forward, coord)
-_default_bounds(tf::TransformPair, coord::RadarCoordinate) = footprint_bounds(tf.inverse, coord)
 
 # Split from `pairgeometry` so the loop specializes on the concrete input and transform types
 # rather than on the keyword-argument call site.
@@ -181,7 +173,6 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     sp = spacing(coord)
 
     out = Int32(nd.output)
-    fout = nd.output
 
     # `win` gives grid indices; the input and output arrays are indexed by position within the
     # window. Both are walked together with `zip` rather than by linear index, so a view whose axes
@@ -261,7 +252,7 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     end
 
     # Bands the inputs do not support stay at their sentinel; the reference writes no file for them.
-    has_slope || (fill!(r.scale_x, fout); fill!(r.scale_y, fout))
+    has_slope || (fill!(r.scale_x, nd.output); fill!(r.scale_y, nd.output))
     return r
 end
 
