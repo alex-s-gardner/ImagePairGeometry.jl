@@ -155,7 +155,7 @@ they leave exact:
 - `:hybrid` interpolates only the two inverse calls. The pixel-location bands come from the forward
   transform alone, so they stay bitwise identical to the exact path. Saturates around 1.6×, since
   the one remaining call is the floor.
-- `:full` interpolates both directions, for up to 6.3×. The location bands can then differ by one pixel
+- `:full` interpolates both directions, for up to 6.9×. The location bands can then differ by one pixel
   — the positional error is far below a pixel, but it can move a point across a rounding boundary.
 
 It is an [`AbstractTransformFactory`](@ref), so a blocked run calls it once per task and each task owns

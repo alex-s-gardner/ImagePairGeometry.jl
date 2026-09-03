@@ -40,7 +40,7 @@ r = pairgeometry_blocked(grid, pair, source; transform = tf, window = win, ntask
 ```
 
 `:hybrid` interpolates only the two inverse calls, keeping the pixel-location bands bitwise identical
-to the exact path, for about 1.6×. `:full` interpolates both directions for up to 6.3×, at a difference
+to the exact path, for about 1.6×. `:full` interpolates both directions for up to 6.9×, at a difference
 of at most one pixel in those bands. The exact path stays the default;
 [`docs/interpolated-transform.md`](docs/interpolated-transform.md) records the measured cost and
 accuracy of each mode, spacing and band.

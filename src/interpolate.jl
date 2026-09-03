@@ -1,6 +1,6 @@
 # Approximating a coordinate transform on a coarse lattice.
 #
-# The projection library is 88.6% of a cross-CRS run (`benchmark/cost_share.jl`), and the kernel
+# The projection library is around 88% of a cross-CRS run (`benchmark/cost_share.jl`), and the kernel
 # makes three calls per grid point. Batching them through `proj_trans_generic` measures 1.00x — the
 # cost is the projection math, not the call — so the only lever is making fewer calls. A transform
 # between two map projections is smooth over a few hundred meters, so it can be evaluated on a
@@ -10,8 +10,9 @@
 # A `CoordLattice` is callable as `(x, y, z) -> (x′, y′, z′)`, so it substitutes into a
 # `TransformPair` and the kernel needs no change. That is what makes the two modes possible:
 # `location_x`/`location_y` come from the forward transform alone, so interpolating only the
-# *inverse* leaves every integer band bitwise exact while still dropping two of the three calls.
-# `docs/interpolated-transform.md` records the measured cost and accuracy of each mode.
+# *inverse* leaves them bitwise exact while still dropping two of the three calls. The bands that go
+# through the velocity operator carry the inverse's error and can tip by one; which band lands where
+# is tabulated in `docs/interpolated-transform.md`, along with the measured cost of each mode.
 #
 # Not GDAL's approximating transformer, though it is the same idea: that one requires the points
 # handed to it to be collinear and ordered, so it can transform the endpoints exactly and bisect
@@ -82,18 +83,19 @@ Callable as `(x, y, z) -> (x′, y′, z′)`, so it stands in for a transform a
 including inside a [`TransformPair`](@ref), which is how [`InterpolatedTransform`](@ref) uses it.
 
 # Fields
-- `x`, `y`: the transformed coordinates at each node, `(nx, ny, 2)`. The trailing axis is the two
-  elevations in `zrange`.
+- `x`, `y`: the transformed coordinates at each node, `(nx, ny, nlevels)`. The trailing axis is the
+  elevations in `zrange`: two where the transform's horizontal result depends on elevation, one where
+  it does not.
 - `origin`: the `(x, y)` input coordinate of node `(1, 1)`.
 - `spacing`: node spacing in input coordinates, positive in both directions.
-- `zrange`: the two elevations the lattice is tabulated at.
+- `zrange`: the elevations bounding what the lattice was tabulated over.
 - `interpolation`: the [`LatticeInterpolation`](@ref) used between nodes.
-- `flat`: whether the two elevation levels are identical, so a query can skip the second.
+- `flat`: whether a query can read one level and ignore elevation.
 
-Tabulating at two elevations and interpolating linearly between them is exact rather than
-approximate: elevation enters a horizontal coordinate only through a datum shift, which is linear in
-it. For two CRSs on one datum — every ITS_LIVE projection — both levels are identical, `flat` is
-true, and a query interpolates one level instead of blending two copies of the same value.
+Interpolating linearly between two elevations is exact rather than approximate: elevation enters a
+horizontal coordinate only through a datum shift, which is linear in it. For two CRSs on one datum —
+every ITS_LIVE projection — there is no such shift, so [`build_lattice`](@ref) tabulates one level
+instead of two and a query reads it directly.
 
 A query outside the lattice throws. Clamping instead would turn a bounds error into a plausible
 coordinate, which is exactly the failure this package's bitwise tests exist to catch. A `NaN`
@@ -112,18 +114,20 @@ struct CoordLattice{M<:LatticeInterpolation}
     function CoordLattice{M}(x, y, origin, spacing, zrange, interpolation) where {M}
         axes(x) == axes(y) || throw(DimensionMismatch(
             "CoordLattice x and y node tables must match: $(axes(x)) vs $(axes(y))"))
-        size(x, 3) == 2 || throw(ArgumentError(
-            "CoordLattice node tables must have two elevation levels, got $(size(x, 3))"))
+        size(x, 3) in (1, 2) || throw(ArgumentError(
+            "CoordLattice node tables must have one or two elevation levels, got $(size(x, 3))"))
         all(>(0), spacing) || throw(ArgumentError(
             "CoordLattice spacing must be positive, got $spacing"))
         h = latticehalo(interpolation)
         min(size(x, 1), size(x, 2)) >= 2h + 2 || throw(ArgumentError(
             "CoordLattice is $(size(x, 1))x$(size(x, 2)) nodes, too small for " *
             "$(typeof(interpolation)), which needs at least $(2h + 2) in each direction"))
-        # Bit patterns, not `==`: the two levels have to be interchangeable for a query to drop one,
-        # and `-0.0 == 0.0` holds while the bits differ.
-        flat = reinterpret(UInt64, x[:, :, 1]) == reinterpret(UInt64, x[:, :, 2]) &&
-               reinterpret(UInt64, y[:, :, 1]) == reinterpret(UInt64, y[:, :, 2])
+        # One level means the transform was found not to depend on elevation, so a query reads it
+        # directly. With two, they still have to be interchangeable to skip one, tested on bit
+        # patterns rather than `==` because `-0.0 == 0.0` holds while the bits differ.
+        flat = size(x, 3) == 1 ||
+               (reinterpret(UInt64, x[:, :, 1]) == reinterpret(UInt64, x[:, :, 2]) &&
+                reinterpret(UInt64, y[:, :, 1]) == reinterpret(UInt64, y[:, :, 2]))
         return new{M}(x, y, origin, spacing, zrange, interpolation, flat)
     end
 end
@@ -149,10 +153,15 @@ answer queries in, as an `Extents.Extent{(:X, :Y)}` in `t`'s input coordinates; 
 a kernel-dependent margin beyond it so the interpolation stencil is complete at the boundary.
 `spacing` is a positive `(dx, dy)` in input coordinates.
 
-This is the only place the underlying transform is called: `2 * nx * ny` times, against three times
-per grid point for the exact path. A non-finite node means the transform failed over the region and
-is thrown rather than interpolated, since it would otherwise spread `NaN` across every cell touching
-that node.
+This is the only place the underlying transform is called. A non-finite node means the transform
+failed over the region and is thrown rather than interpolated, since it would otherwise spread `NaN`
+across every cell touching that node.
+
+One elevation level is tabulated where the transform's horizontal result does not depend on
+elevation, two where it does, so the cost is `nx * ny` calls rather than `2 * nx * ny` for a
+same-datum pair. Which case holds is established by probing the two `zrange` extremes at the
+lattice's own corners and center: elevation enters a horizontal coordinate only through a datum
+shift, and a pipeline either applies one everywhere over a region this size or nowhere.
 """
 function build_lattice(t, bounds::Extent, spacing::NTuple{2,Real},
                        interpolation::LatticeInterpolation; zrange = DEFAULT_ZRANGE)
@@ -171,39 +180,61 @@ function build_lattice(t, bounds::Extent, spacing::NTuple{2,Real},
     origin = (xlo - h * sx, ylo - h * sy)
 
     z0, z1 = Float64(zrange[1]), Float64(zrange[2])
-    X = Array{Float64,3}(undef, nx, ny, 2)
-    Y = Array{Float64,3}(undef, nx, ny, 2)
-    for (l, z) in enumerate((z0, z1)), j in axes(X, 2), i in axes(X, 1)
-        gx = origin[1] + (i - 1) * sx
-        gy = origin[2] + (j - 1) * sy
-        px, py, _ = t(gx, gy, z)
-        (isfinite(px) && isfinite(py)) || throw(ArgumentError(
-            "build_lattice got a non-finite result from the transform at ($gx, $gy, $z): " *
-            "($px, $py). The lattice must cover a region the transform is defined over, " *
-            "including its $h-node margin beyond the queried bounds."))
-        X[i, j, l] = px
-        Y[i, j, l] = py
+    xmax = origin[1] + (nx - 1) * sx
+    ymax = origin[2] + (ny - 1) * sy
+    xmid = origin[1] + (nx ÷ 2) * sx
+    ymid = origin[2] + (ny ÷ 2) * sy
+    nlevels = _depends_on_z(t, (origin[1], xmid, xmax), (origin[2], ymid, ymax), z0, z1) ? 2 : 1
+
+    X = Array{Float64,3}(undef, nx, ny, nlevels)
+    Y = Array{Float64,3}(undef, nx, ny, nlevels)
+    for l in 1:nlevels
+        z = l == 1 ? z0 : z1
+        for j in axes(X, 2), i in axes(X, 1)
+            gx = origin[1] + (i - 1) * sx
+            gy = origin[2] + (j - 1) * sy
+            px, py, _ = t(gx, gy, z)
+            (isfinite(px) && isfinite(py)) || throw(ArgumentError(
+                "build_lattice got a non-finite result from the transform at ($gx, $gy, $z): " *
+                "($px, $py). The lattice must cover a region the transform is defined over, " *
+                "including its $h-node margin beyond the queried bounds."))
+            X[i, j, l] = px
+            Y[i, j, l] = py
+        end
     end
     return CoordLattice(X, Y, origin, (sx, sy), (z0, z1), interpolation)
 end
 
-# The node index and offset within the cell for one direction. `i` is the stencil's leading node.
-@inline function _cell(L::CoordLattice, v::Float64, d::Int)
-    u = (v - L.origin[d]) / L.spacing[d]
-    n = d == 1 ? size(L.x, 1) : size(L.x, 2)
-    i = floor(Int, u)
-    t = u - i
-    # One-based nodes; `i` counts cells from zero.
-    return (i + 1, t, n)
+# Whether `t`'s horizontal result moves with elevation anywhere among the probed points.
+#
+# Bitwise, not a tolerance: a difference of any size means the pipeline carries a vertical component,
+# and then both levels have to be tabulated. Equal at every probe means it carries none, since a datum
+# shift is a property of the pipeline rather than of position — it cannot switch on within a region a
+# single lattice covers.
+function _depends_on_z(t, xs, ys, z0::Float64, z1::Float64)
+    z0 == z1 && return false
+    for x in xs, y in ys
+        a = t(x, y, z0)
+        b = t(x, y, z1)
+        ((a[1] === b[1]) & (a[2] === b[2])) || return true
+    end
+    return false
 end
 
-@inline function _checkrange(L::CoordLattice, i::Int, n::Int, lo::Int, hi::Int, v::Float64, d::Int)
-    (i - lo >= 1) & (i + hi <= n) || throw(ArgumentError(
+# The cell containing `v` along direction `d`, as the index of the cell's lower node and the fraction
+# across it, having checked the interpolation stencil fits. `h` is the stencil's reach either side.
+@inline function _cell(L::CoordLattice, v::Float64, d::Int, h::Int)
+    # Divides rather than multiplying by a stored reciprocal: `x * (1/s)` is not `x / s` in the last
+    # bit, and it measured no faster here — the divide is off the critical path.
+    u = (v - L.origin[d]) / L.spacing[d]
+    i = floor(Int, u) + 1
+    n = size(L.x, d)
+    (i - h >= 1) & (i + h <= n) || throw(ArgumentError(
         "CoordLattice query is outside the lattice: coordinate $d is $v, and the lattice covers " *
-        "$(L.origin[d] + lo * L.spacing[d]) to " *
-        "$(L.origin[d] + (n - 1 - hi) * L.spacing[d]). The lattice must be built over the whole " *
+        "$(L.origin[d] + h * L.spacing[d]) to " *
+        "$(L.origin[d] + (n - 1 - h) * L.spacing[d]). The lattice must be built over the whole " *
         "region that will be queried."))
-    return nothing
+    return (i, u - (i - 1))
 end
 
 @inline function (L::CoordLattice)(x, y, z)
@@ -223,21 +254,17 @@ end
     return (px0 + t * (px1 - px0), py0 + t * (py1 - py0), fz)
 end
 
-@inline function _interp(L::CoordLattice, ::NearestNode, x::Float64, y::Float64, l::Int)
-    i, tx, nx = _cell(L, x, 1)
-    j, ty, ny = _cell(L, y, 2)
-    _checkrange(L, i, nx, 1, 1, x, 1)
-    _checkrange(L, j, ny, 1, 1, y, 2)
+@inline function _interp(L::CoordLattice, m::NearestNode, x::Float64, y::Float64, l::Int)
+    i, tx = _cell(L, x, 1, latticehalo(m))
+    j, ty = _cell(L, y, 2, latticehalo(m))
     i += tx >= 0.5
     j += ty >= 0.5
     return (L.x[i, j, l], L.y[i, j, l])
 end
 
-@inline function _interp(L::CoordLattice, ::Bilinear, x::Float64, y::Float64, l::Int)
-    i, tx, nx = _cell(L, x, 1)
-    j, ty, ny = _cell(L, y, 2)
-    _checkrange(L, i, nx, 1, 1, x, 1)
-    _checkrange(L, j, ny, 1, 1, y, 2)
+@inline function _interp(L::CoordLattice, m::Bilinear, x::Float64, y::Float64, l::Int)
+    i, tx = _cell(L, x, 1, latticehalo(m))
+    j, ty = _cell(L, y, 2, latticehalo(m))
     return (_bilin(L.x, i, j, l, tx, ty), _bilin(L.y, i, j, l, tx, ty))
 end
 
@@ -247,11 +274,9 @@ end
     return a + ty * (b - a)
 end
 
-@inline function _interp(L::CoordLattice, ::Bicubic, x::Float64, y::Float64, l::Int)
-    i, tx, nx = _cell(L, x, 1)
-    j, ty, ny = _cell(L, y, 2)
-    _checkrange(L, i, nx, 2, 2, x, 1)
-    _checkrange(L, j, ny, 2, 2, y, 2)
+@inline function _interp(L::CoordLattice, m::Bicubic, x::Float64, y::Float64, l::Int)
+    i, tx = _cell(L, x, 1, latticehalo(m))
+    j, ty = _cell(L, y, 2, latticehalo(m))
     wx = _cubicweights(tx)
     wy = _cubicweights(ty)
     return (_bicub(L.x, i, j, l, wx, wy), _bicub(L.y, i, j, l, wx, wy))

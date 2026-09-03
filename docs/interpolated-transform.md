@@ -35,18 +35,25 @@ Measured on an EPSG:3413 grid at 120 m against UTM 32624 imagery at 30 m, 676,50
 
 | mode | lattice | kernel | PROJ calls/point | ns/point | speedup |
 |---|---|---|---|---|---|
-| exact | — | — | 3 | 939 | 1.00× |
-| `:hybrid` | 2 | `Bilinear` | 1 | 694 | 1.35× |
-| `:hybrid` | 4 | `Bilinear` | 1 | 608 | 1.55× |
-| `:hybrid` | 8 | `Bilinear` | 1 | 589 | 1.60× |
-| `:full` | 2 | `Bilinear` | 0 | 478 | 1.96× |
-| `:full` | 4 | `Bilinear` | 0 | 214 | 4.38× |
-| `:full` | 8 | `Bilinear` | 0 | 150 | 6.29× |
-| `:full` | 4 | `Bicubic` | 0 | 247 | 3.80× |
-| `:full` | 8 | `Bicubic` | 0 | 184 | 5.13× |
+| exact | — | — | 3 | 943 | 1.00× |
+| `:hybrid` | 2 | `Bilinear` | 1 | 631 | 1.49× |
+| `:hybrid` | 4 | `Bilinear` | 1 | 584 | 1.61× |
+| `:hybrid` | 8 | `Bilinear` | 1 | 575 | 1.64× |
+| `:full` | 2 | `Bilinear` | 0 | 296 | 3.19× |
+| `:full` | 4 | `Bilinear` | 0 | 169 | 5.58× |
+| `:full` | 8 | `Bilinear` | 0 | 137 | 6.90× |
+| `:full` | 4 | `Bicubic` | 0 | 200 | 4.71× |
+| `:full` | 8 | `Bicubic` | 0 | 168 | 5.51× |
 
 `:hybrid` keeps one PROJ call per point, so it saturates around 1.6× however coarse the lattice —
-the remaining call is the floor. `:full` removes that floor, and then coarsening keeps paying.
+the remaining call is the floor, and at a 4× lattice it is 57% of the run. `:full` removes that
+floor, and then coarsening keeps paying.
+
+What remains in `:full` is split between the per-point interpolation and building the lattice, which
+is a fixed cost amortized over the window: at a 4× lattice the build is 28% of the run, at 8× it is
+11%, and it shrinks further as a scene grows. The rest is the driver's own per-point work — reading
+the input rasters, the geometry arithmetic, and writing seventeen output bands — which an identity
+transform measures at 108 ns/point and which no transform work can remove.
 
 Reproduce with `benchmark/cost_share.jl`, which also reports PROJ's share of the exact run.
 
@@ -95,8 +102,8 @@ search centers a correlator is handed are the same ones the exact path would giv
 
 `:full` is worth it where a one-pixel difference in a search center is acceptable, which for a
 correlator searching tens of pixels it may well be. `Bicubic` at 8× is the interesting corner —
-5.13× with no location shift at all on the fixtures, against `Bilinear` at 8× which is faster at
-6.29× but shifts a handful of points. Cubic convolution reproduces a quadratic exactly where
+5.51× with no location shift at all on the fixtures, against `Bilinear` at 8× which is faster at
+6.90× but shifts a handful of points. Cubic convolution reproduces a quadratic exactly where
 bilinear does not, so it holds a given accuracy at a coarser lattice; the extra per-point arithmetic
 is cheaper than the PROJ calls a finer lattice would need to build.
 
@@ -106,10 +113,16 @@ all.
 
 ## Elevation
 
-The lattice is tabulated at both ends of `zrange` and interpolated linearly between them. This is
-exact rather than approximate: elevation enters a horizontal coordinate only through a datum shift,
-which is linear in it. For two CRSs on one datum — every ITS_LIVE projection — both levels are
-identical, and the interpolation returns the same value either way.
+Where the transform's horizontal result moves with elevation, the lattice is tabulated at both ends
+of `zrange` and interpolated linearly between them. That is exact rather than approximate: elevation
+enters a horizontal coordinate only through a datum shift, which is linear in it.
+
+Where it does not, one level is tabulated and a query reads it directly. Which case holds is
+established by probing the two `zrange` extremes at the lattice's corners and center, bitwise: a
+difference of any size means the pipeline carries a vertical component. For two CRSs on one datum,
+which is every ITS_LIVE projection, there is no such shift, so this halves the transform calls a
+lattice costs to build. Worth having because the build is a real share of a `:full` run rather than a
+setup detail: 28% at a 4× lattice on the benchmark scene.
 
 ## What does not pay
 
