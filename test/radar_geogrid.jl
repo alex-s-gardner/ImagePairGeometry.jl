@@ -238,6 +238,65 @@ end
     end
 end
 
+@testset "points outside the swath are sentinel on both sides" begin
+    # The `oversize` case puts a grid deliberately larger than the swath, so the `rgind`/`azind`
+    # bounds test at `geogridRadar.cpp:1112` fires for geometric reasons rather than input nodata.
+    # Agreeing on *which* points fall outside is a stronger check than agreeing on the values inside:
+    # a systematic error in the solve would move the swath edge, not just the last bits.
+    c = only(filter(x -> x.name == "oversize", collect(GFIX.cases)))
+    r, _, _, _, _ = run_radar_case(c)
+    want = Int32.(refband(c.name, "window_location.tif", 1))
+
+    outside_ref = want .== Int32(-32767)
+    outside_got = r.location_x .== Int32(-32767)
+    @test count(outside_ref) > length(want) ÷ 10      # the case is only useful if many are outside
+    # Under 0.5% may disagree, and only at the edge where a point sits within the azimuth residual
+    # of the boundary.
+    @test count(outside_ref .!= outside_got) <= length(want) ÷ 200
+    @info "swath-edge agreement" outside_reference = count(outside_ref) disagreeing = count(outside_ref .!= outside_got) of = length(want)
+end
+
+@testset "a slope raster alone writes four files" begin
+    # The operator and the scale factors need only the normal; the offset and search bands need
+    # velocity and search-range rasters on top of it.
+    c = only(filter(x -> x.name == "dem_slope", collect(GFIX.cases)))
+    present = [String(k) for (k, v) in pairs(c.outputs) if v !== nothing]
+    @test length(present) == 4
+    @test "window_location.tif" in present
+    @test "window_rdr_off2vel_x_vec.tif" in present
+    @test "window_scale_factor.tif" in present
+    @test !("window_offset.tif" in present)
+    @test !("window_search_range.tif" in present)
+
+    r, _, _, _, _ = run_radar_case(c)
+    # Our result agrees: those bands are all sentinel, and the ones the reference wrote are not.
+    @test all(==(Int32(-32767)), r.offset_x)
+    @test all(==(Int32(-32767)), r.search_x)
+    @test any(!=(-32767.0), r.scale_x)
+end
+
+@testset "cross_check across the fixture cases" begin
+    # The `acos` concern: the operator is skipped where `cross_check <= 1.0`, and one ULP of `acos`
+    # could flip that for a point sitting on the threshold. Measured over every point of every case
+    # rather than assumed — a nodata operator where the reference wrote one, or the reverse, is what
+    # a flip would look like.
+    disagree = 0
+    total = 0
+    for c in GFIX.cases
+        r, _, _, _, _ = run_radar_case(c)
+        c.outputs[Symbol("window_rdr_off2vel_x_vec.tif")] === nothing && continue
+        want = refband(c.name, "window_rdr_off2vel_x_vec.tif", 1)
+        for k in eachindex(r.off2vx_dx, want)
+            total += 1
+            (want[k] == -32767.0) == (r.off2vx_dx[k] == -32767.0) || (disagree += 1)
+        end
+    end
+    # The gate is unreachable at these incidence angles, so the two sides should agree on every point
+    # except where the swath edge itself is ambiguous.
+    @test disagree <= total ÷ 200
+    @info "operator-gate agreement (cross_check > 1°)" disagreeing = disagree of = total
+end
+
 @testset "an unsupported band writes nothing" begin
     # `dem_only` has no slope raster, so the reference writes one file of the nine.
     c = only(filter(x -> x.name == "dem_only", collect(GFIX.cases)))

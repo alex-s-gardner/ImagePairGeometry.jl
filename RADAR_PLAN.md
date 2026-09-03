@@ -244,9 +244,9 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–007 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+**Status: 001–008 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
 `test/radar_coordinate.jl` hold 1035 assertions against two fixtures generated from isce3 0.25.12. The
-full suite passes at 7068 and the docs build clean. What measurement changed from the plan as written
+full suite passes at 47093 radar assertions (9788 total before the eight-case fixture landed) and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
 
 `RadarCoordinate` is constructible and supplies a footprint and the ground pixel sizes;
@@ -254,9 +254,10 @@ is recorded in *Findings* below and in `REFERENCE.md`.
 rather than reading a coordinate; and `pointgeometry` has a `RadarCoordinate` method returning the same
 `PointGeometry` the projected path produces.
 
-What remains before a radar pair can reach `pairgeometry` is CHUNK-008: dispatching the driver loop on
-the coordinate type, and the whole-kernel fixture that finally checks the per-point values against the
-compiled reference.
+A radar pair reaches `pairgeometry` and produces all nine outputs, checked against the compiled
+reference over eight cases. What remains is CHUNK-009 (blocking and threading, where the groundwork is
+already in place — `_run_block!` takes any `AbstractImageCoordinate`) and CHUNK-010 (the extensions and
+documentation, including the radar-only y-sign negation).
 
 ### CHUNK-001: ellipsoid and TCN basis — done
 
@@ -441,7 +442,7 @@ that, a boxing hypothesis for the same phantom allocation led to rewriting the r
 `foldl`, which changed nothing and was reverted. The lesson is the one the earlier benchmark work
 already taught: measure with a warmed-up harness, not with `@allocated` in global scope.
 
-### CHUNK-008: driver dispatch and whole-kernel fixture
+### CHUNK-008: driver dispatch and whole-kernel fixture — done
 
 `_fill_geometry!` dispatches on `AbstractImageCoordinate`. Since CHUNK-006 moved the coordinate
 system's contribution behind `pointgeometry` and a spacing pair, the loop body should be shared;
@@ -451,7 +452,20 @@ method, not a second copy of the loop.
 `gen_geogrid_radar.py` and `test/radar_geogrid.jl`: all nine outputs, every case listed above,
 Tier A bitwise and Tier B bounded, with the observed maximum reported on every run.
 
-Records the measured `cross_check` range across the fixture cases, per the `acos` concern above.
+Eight cases, 47093 assertions. The two that earn their place beyond value comparison:
+
+**`oversize`** puts a grid larger than the swath, so 5539 of 19502 points fall outside and the
+`rgind`/`azind` bounds test at `:1112` fires geometrically rather than from input nodata. The two sides
+agree on *which* points are outside for **all 19502** — a systematic error in the solve would move the
+swath edge rather than only the last bits, so this is the check that would catch one.
+
+**`dem_slope`** supplies a slope raster with no velocity or search range, so the reference writes four
+files of nine: the operator and scale factors need only the normal.
+
+The `acos` concern is closed. Agreement on where the operator gate fires — `cross_check > 1.0`, the
+place a one-ULP `acos` difference could flip an output — holds on **all 29012 points** across every
+case. Combined with the 40.2° margin measured in CHUNK-007, the gate is unreachable at real incidence
+angles on both paths.
 
 ### CHUNK-009: blocked and threaded
 

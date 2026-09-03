@@ -180,6 +180,12 @@ CASES = [
     ('with_nodata',   32632, 500.0, 48, 'right',  6,   True,  True),
     # DEM only: most bands are unsupported and the reference writes no file for them.
     ('dem_only',      32632, 500.0, 32, 'right',  6,   False, False),
+    # DEM and slope, no velocity or search range: the operator and scale factors are written but the
+    # offset and search bands are not.
+    ('dem_slope',     32632, 500.0, 32, 'right',  6,   False, 'slope'),
+    # A grid deliberately larger than the swath, so points fall outside it and the `rgind`/`azind`
+    # bounds test at `geogridRadar.cpp:1112` writes sentinels for geometric rather than nodata reasons.
+    ('oversize',      32632, 500.0, 200, 'right', 6,   False, True),
 ]
 
 out = {'cases': []}
@@ -232,8 +238,13 @@ for (name, epsg, spacing, npix, side, dt_days, holes, full) in CASES:
     shape = (npix, npix)
     obj.gridSpacingX = spacing
 
-    kinds = ['dem'] if not full else ['dem', 'dhdx', 'dhdy', 'vx', 'vy', 'srx', 'sry',
-                                      'csminx', 'csminy', 'csmaxx', 'csmaxy', 'ssm']
+    if full == 'slope':
+        kinds = ['dem', 'dhdx', 'dhdy']
+    elif full:
+        kinds = ['dem', 'dhdx', 'dhdy', 'vx', 'vy', 'srx', 'sry',
+                 'csminx', 'csminy', 'csmaxx', 'csmaxy', 'ssm']
+    else:
+        kinds = ['dem']
     fields = {}
     for si, kind in enumerate(kinds):
         arr = synth(shape, kind, seed=2000 + si, holes=holes)
@@ -275,7 +286,7 @@ for (name, epsg, spacing, npix, side, dt_days, holes, full) in CASES:
         'grid': {'geotransform': list(dem_gt), 'size': list(shape), 'epsg': epsg},
         'dt': dt_days * 86400.0,
         'chip_size_0': 240.0,
-        'has_full_inputs': full,
+        'has_full_inputs': full is True,
         'input_names': sorted(fields),
         'scalars': {'pOff': int(obj.pOff), 'lOff': int(obj.lOff),
                     'pCount': int(obj.pCount), 'lCount': int(obj.lCount),
