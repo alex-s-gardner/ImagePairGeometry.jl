@@ -100,8 +100,9 @@ Geometry of `pair` at every point of `grid` covered by `window`.
 
 `grid` is the target [`MapGrid`](@ref), `pair` a [`CoregisteredPair`](@ref), and `inputs` a
 [`GeometryInputs`](@ref) whose arrays cover `window`. `transform` maps grid coordinates to image
-coordinates — an [`IdentityTransform`](@ref), a `TransformPair`, or a `Proj.Transformation`, whose
-inverse is derived when only one direction is given.
+coordinates — an [`IdentityTransform`](@ref), a `TransformPair`, a `Proj.Transformation` (whose
+inverse is derived when only one direction is given), or a factory returning one, such as
+`ProjTransformFactory` or [`InterpolatedTransform`](@ref), which is resolved once here.
 
 `window` defaults to the whole grid intersected with the pair's footprint, via
 [`footprint_bounds`](@ref) and [`grid_window`](@ref).
@@ -133,7 +134,7 @@ function pairgeometry(grid::MapGrid, pair::CoregisteredPair, inputs::GeometryInp
                       transform = IdentityTransform(), window = nothing,
                       params::GeometryParams = GeometryParams(),
                       nodata::NoDataPolicy = nodata_from(nothing))
-    tf = transform_pair(transform)
+    tf = _resolve_transform(transform)
     coord = pair.coordinate
     win = window === nothing ? grid_window(grid, footprint_bounds(tf.forward, coord)) : window
 

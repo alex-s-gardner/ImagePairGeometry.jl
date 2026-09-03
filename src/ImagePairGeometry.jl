@@ -38,6 +38,8 @@ export PairGeometry, GeometryInputs, GeometryParams, SearchRangeScaling
 export pairgeometry, pairgeometry_blocked, npoints, nvalid
 export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
+export InterpolatedTransform, CoordLattice, build_lattice, latticesize
+export LatticeInterpolation, NearestNode, Bilinear, Bicubic
 export proj_transform
 export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
@@ -54,6 +56,9 @@ include("nodata.jl")
 include("result.jl")
 include("driver.jl")
 include("blocks.jl")
+# After `blocks.jl`: `InterpolatedTransform` subtypes `AbstractTransformFactory`, so that type must
+# exist first.
+include("interpolate.jl")
 
 """
     proj_transform(grid_crs, image_crs) -> TransformPair
