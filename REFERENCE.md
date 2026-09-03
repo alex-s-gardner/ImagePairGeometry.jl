@@ -234,6 +234,29 @@ midpoint `sensingStart + (floor(nLines / 2) - 1) / prf`. Not the `sensingStart`-
 differ by one pulse interval, so using the wrong one changes `azm_res` in its last bits — the first
 place the two-clock split has an observable consequence.
 
+### The radar outputs divide by two different azimuth spacings
+
+The along-track step appears in two frames, and the reference divides by whichever one is at hand
+rather than by a single canonical value:
+
+| output | azimuth denominator | frame |
+|---|---|---|
+| `window_offset` | `norm(alt)` (`:1151`) | grid |
+| `window_rdr_off2vel_*` bands 1–2 | `norm(da)` (`:1166-1176`) | **ECEF** |
+| `window_rdr_off2vel_*` band 3 | `norm(da)` (`:1187`) | **ECEF** |
+| `window_scale_factor` | `norm(da)` (`:1191`) | **ECEF** |
+| `window_search_range` | `norm(alt)` (`:1207-1216`) | grid |
+
+`alt` is `llh - targllh0` after `invTrans` (`:1082-1083`) and `da` is `targXYZ - xyz` (`:1159`) — one
+displacement, expressed in grid coordinates and in ECEF. Their norms differ by the local map scale,
+measured at 0.64% in UTM 32N.
+
+So the operator and the search extent are scaled differently, by a fraction of a percent, for no
+reason visible in the code. Reproduced: `RadarSpacing` carries both pairs and each output takes the one
+its reference site uses. Passing one where the other belongs shifts the operator relative to the search
+extent, which is exactly the kind of error a whole-band comparison catches and a per-point check does
+not.
+
 ### The footprint is solved for, not transformed
 
 `GeogridOptical.determineBbox` transforms four image corners. Its radar counterpart
@@ -342,10 +365,19 @@ They hold the same instant on two different clocks, which is why both are needed
 - `tmids` (`GeogridRadar.py:347`) is an absolute UTC timestamp string, parsed to `secondsSinceEpoch()`
   (`:432`), which initializes `tlined`. That is the orbit's clock.
 
-`tline - tlined` is therefore a constant epoch offset. The two initialization expressions look like
-they disagree by one pulse interval — `0.5 * nLines / prf` against
-`(floor(nLines / 2) - 1) / prf` — but they are in different coordinate systems and comparing them
-directly is meaningless.
+`tline - tlined` is therefore a constant, and Newton preserves it — both receive the same increment.
+But the constant is *not* just the epoch difference, and this is the part that matters: the two are
+initialized with different offsets from `sensingStart`, `0.5 * nLines / prf` against
+`(floor(nLines / 2) - 1) / prf`. The epoch cancels out of their difference, leaving those offsets,
+which differ by exactly one pulse interval for an even line count.
+
+So the converged `tline` corresponds to a satellite position one pulse away from the one the orbit was
+interpolated at, and `azind` — computed from the `tline` lineage at `:972` — is offset by about one
+line from the geometrically consistent value. Measured: a grid point placed by `rdr2geo` at a known
+azimuth time comes back with an index one greater than that time implies.
+
+Reproduced, because it is what the reference's products contain. A caller correlating against those
+products needs the same offset or its chips will be off by a line.
 
 Their difference is preserved to rounding rather than to the bit: each subtraction rounds to its own
 exponent, so scales separated by a large epoch offset drift by an ULP of the times, about 1e-13 s per

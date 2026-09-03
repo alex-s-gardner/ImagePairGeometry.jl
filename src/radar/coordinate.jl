@@ -140,11 +140,15 @@ midtime(c::RadarCoordinate) = c.sensing_start + 0.5 * c.nlines / c.prf
 Scene midpoint on the *orbit's* clock, as `GeogridRadar.py:346-347` computes it:
 `sensing_start + (floor(nlines / 2) - 1) / prf`, shifted by `orbit_epoch_offset`.
 
-Deliberately a different expression from [`midtime`](@ref). The reference builds the two
-independently — one in C++ from the line count, one in Python from a timestamp string — and for an
-even line count they differ by one pulse interval. Since the two feed different clocks and only
-their difference is used, that difference is a property of the pair of expressions and is
-reproduced rather than reconciled.
+Deliberately a different expression from [`midtime`](@ref), and the difference reaches the output.
+Both are offsets from `sensing_start` on their own clocks, so the epoch cancels from
+`midtime - orbit_midtime`, leaving `0.5 * nlines / prf` against `(floor(nlines / 2) - 1) / prf` — one
+pulse interval apart for an even line count.
+
+`geo2rdr` preserves that difference, so the converged azimuth time corresponds to a satellite position
+one pulse from where the orbit was interpolated, and the azimuth index is one line off the
+geometrically consistent value. Reproduced rather than reconciled: the reference's products contain
+that offset. See `REFERENCE.md`.
 """
 orbit_midtime(c::RadarCoordinate) =
     c.sensing_start + (floor(c.nlines / 2) - 1) / c.prf + c.orbit_epoch_offset

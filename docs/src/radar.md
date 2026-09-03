@@ -66,5 +66,5 @@ so neither needs a conversion at the point of use.
 Modules = [ImagePairGeometry]
 Order = [:type, :constant, :function]
 Pages = ["radar/ellipsoid.jl", "radar/orbit.jl", "radar/geo2rdr.jl", "radar/rdr2geo.jl",
-         "radar/coordinate.jl"]
+         "radar/coordinate.jl", "radar/geometry.jl"]
 ```

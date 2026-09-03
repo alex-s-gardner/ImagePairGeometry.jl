@@ -151,10 +151,10 @@ comment at its site plus an entry in `REFERENCE.md`.
   behavior with a value to match. This joins the deliberate divergences.
 
 - **`acos` in `cross_check`.** On the projected path this sits at 82–90°, so the one-ULP
-  openlibm-versus-system-libm difference cannot flip the `> 1.0` gate. Radar geometry is oblique
-  and can approach it. CHUNK-008 measures where `cross_check` actually lands on the fixture cases
-  and records it; if any point sits within a ULP of the gate, that is a documented
-  platform-dependent output rather than something to paper over.
+  openlibm-versus-system-libm difference cannot flip the `> 1.0` gate. The worry was that radar
+  geometry, being oblique, could approach it. Measured across the swath: 40.2° at worst, which is a
+  wide margin — so the gate is unreachable on both paths and the `acos` difference cannot change an
+  output. The margin is reported on every run in `test/radar_geometry.jl`.
 
 ## Relationship to SAR.jl
 
@@ -244,17 +244,19 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–006 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+**Status: 001–007 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
 `test/radar_coordinate.jl` hold 1035 assertions against two fixtures generated from isce3 0.25.12. The
-full suite passes at 7016 and the docs build clean. What measurement changed from the plan as written
+full suite passes at 7068 and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
 
 `RadarCoordinate` is constructible and supplies a footprint and the ground pixel sizes;
-`CoregisteredPair` is parameterized on the coordinate type; and the output kernel takes a spacing pair
-rather than reading a coordinate, so it serves both paths.
+`CoregisteredPair` is parameterized on the coordinate type; the output kernel takes spacings as values
+rather than reading a coordinate; and `pointgeometry` has a `RadarCoordinate` method returning the same
+`PointGeometry` the projected path produces.
 
-What remains before a radar pair can reach `pairgeometry` is CHUNK-007: a `pointgeometry` method for
-`RadarCoordinate`, composing `geo2rdr` with the range–Doppler solve at `tline + 1/prf`.
+What remains before a radar pair can reach `pairgeometry` is CHUNK-008: dispatching the driver loop on
+the coordinate type, and the whole-kernel fixture that finally checks the per-point values against the
+compiled reference.
 
 ### CHUNK-001: ellipsoid and TCN basis — done
 
@@ -330,22 +332,27 @@ two floats of different magnitude rounds each to its own exponent. The drift is 
 under 1e-8 of an azimuth line over 51 iterations, and zero when the offset is zero — the production
 case. The plan's claim of exact preservation was wrong in general and right where it matters.
 
-**The two time scales are two clocks, not two instants — there is no offset quirk.** An earlier
-reading of this plan claimed `tline` and `tlined` start one pulse interval apart, and that CHUNK-005
-would have to reproduce the discrepancy. That was a misreading, corrected here because acting on it
-would have introduced a one-line azimuth error.
+**The one-pulse offset is real, and `azind` carries it.** This entry has been wrong twice. The first
+reading called it a genuine offset; a later "correction" called it an artifact of two clocks and
+claimed there was nothing to reproduce. CHUNK-007 settled it by measurement: the *first* reading was
+right.
 
-`setAzimuthParameters` (`bindings/geogridRadarmodule.cpp:150-160`) receives the `aztime` computed at
-`GeogridRadar.py:328-330` as **seconds since midnight** of the acquisition day, and stores it as
-`sensingStart`. So `tmid = sensingStart + 0.5 * nLines / prf` (`:328`) is on the seconds-since-midnight
-clock — the one `azind` is measured against (`:972`). Meanwhile `tmids` (`GeogridRadar.py:347`) is an
-absolute UTC timestamp, parsed to `secondsSinceEpoch()` (`:432`), and initializes `tlined` only: the
-orbit's clock.
+Both variables are initialized as an offset from `sensingStart`, each on its own clock —
+`tline = sensingStart + 0.5 * nLines / prf` (`geogridRadar.cpp:328`, seconds since midnight) and
+`tlined` from the `tmids` timestamp, which `GeogridRadar.py:347` builds as
+`sensingStart + (floor(nLines / 2) - 1) / prf`. The epoch difference cancels out of `tline - tlined`,
+leaving those two offsets, which differ by exactly one pulse interval for an even line count. Newton
+preserves the difference, so the converged `tline` corresponds to a satellite position one pulse from
+the one the orbit was interpolated at, and `azind` (`:972`) is one line off the geometrically
+consistent value.
 
-The two are therefore the same instant expressed on two clocks, and `tline - tlined` is a constant
-epoch offset. Comparing `0.5 * nLines / prf` against `(floor(nLines / 2) - 1) / prf` compares
-quantities in different coordinate systems and means nothing. CHUNK-005 reproduces both initialization
-expressions verbatim; there is no discrepancy to carry.
+Measured directly: a grid point placed by `rdr2geo` at a known azimuth time returns `azind = 2433`
+where that time implies 2432. Reproduced, because the reference's products contain it — a caller
+correlating against them needs the same offset.
+
+The lesson for the rest of this plan: "two different expressions must be reconciled" and "two
+different expressions are in different units" are both plausible readings of the same code, and only
+a measurement distinguishes them.
 
 ### CHUNK-005: RadarCoordinate, footprint, incidence angle — done
 
@@ -397,7 +404,7 @@ because they iterate `FLOAT_BANDS`, which is now two entries longer — the new 
 sentinel-filled on the projected path. Two new tests pin the layout invariant directly: a projected
 result writes two-band off2vel files, and a result with the radar band filled writes three.
 
-### CHUNK-007: the radar per-point kernel
+### CHUNK-007: the radar per-point kernel — done
 
 `src/radar/geometry.jl`. `pointgeometry(::RadarCoordinate, ...)` returning the same
 `PointGeometry` the projected path produces, plus the per-point azimuth nominal spacing.
@@ -411,7 +418,28 @@ projected path where rounding happens inside `pixel_index`. The bounds test at `
 `rgind > nPixels - 1 | rgind < 0` on integers, where the projected path tests pre-conversion
 Float64.
 
-Verify: through CHUNK-008. This chunk has no independent oracle.
+Verified as far as it can be without an oracle: 52 assertions covering inversion against `rdr2geo`,
+unit-length axis vectors, physical step lengths under UTM 32N, and the range-Doppler solve landing on
+the range sphere. The values themselves wait on CHUNK-008.
+
+**The radar path needs two spacing pairs, not one.** This revises what CHUNK-006 assumed. The
+reference divides the operator and the azimuth scale factor by `norm(da)` — the along-track step in
+**ECEF** (`geogridRadar.cpp:1159`, `:1166-1176`, `:1191`) — and the search extent by `norm(alt)`, the
+same step in **grid** coordinates (`:1207-1216`). They differ by the local map scale, measured at
+0.64% in UTM 32N. `RadarSpacing` carries both; passing one where the other belongs would move the
+operator relative to the search extent.
+
+**`cross_check` is 40.2° at its worst across the swath**, which closes the `acos` question the plan
+raised. The concern was that radar geometry is oblique enough to approach the `> 1.0` gate where the
+projected path's 82–90° never does. It does not: 40° is a wide margin, so the one-ULP openlibm/libm
+difference in `acos` cannot flip the gate on either path.
+
+Two measurement errors caught here, both the same mistake in different clothing: `@allocated` at
+top-level scope reported 240 bytes for `pointgeometry` and 31664 for `looksign`, because it was
+measuring compilation rather than the call. `BenchmarkTools` reports zero allocations for both. Before
+that, a boxing hypothesis for the same phantom allocation led to rewriting the range-Doppler loop as a
+`foldl`, which changed nothing and was reverted. The lesson is the one the earlier benchmark work
+already taught: measure with a warmed-up harness, not with `@allocated` in global scope.
 
 ### CHUNK-008: driver dispatch and whole-kernel fixture
 
@@ -458,10 +486,14 @@ cases, and the "Not yet implemented" section removed. `docs/src/index.md` and `R
 - Does Tier A survive on the radar path? The margin is now known — 1.9e-9 m of ground position
   against a 2.33 m range sample — so the question is whether any fixture point sits within 1e-9 of a
   `std::round` boundary. CHUNK-008 measures.
-- Does `cross_check` ever approach its `> 1.0` gate on real radar geometry? CHUNK-008 measures.
+
 - Is a lattice-interpolated radar mapping worth its accuracy cost? CHUNK-009, after measurement.
 
 Resolved since the plan was written:
+
+- **`cross_check` does not approach its gate.** Measured at 40.2° minimum across the swath, against a
+  `> 1.0` threshold — so the one-ULP `acos` difference between openlibm and the platform libm cannot
+  flip it on the radar path any more than on the projected one.
 
 - **The `atan2` gap stays open, and CI settled why.** The question was whether `ccall`ing the platform
   libm would close it. It would not: `atan2` is itself platform-dependent. The fixture's angles come

@@ -24,7 +24,12 @@ Geometry at one grid point that depends only on the grid, the image coordinate s
 projection — not on the image pair's time separation.
 
 # Fields
-- `image_xy`: the point in image coordinates, before conversion to a pixel index.
+- `image_xy`: where the point falls in the image, in whatever units that path's forward mapping
+  produces. On the projected path these are image *coordinates*, and [`pixel_index`](@ref) converts
+  them to a rounded index. On the radar path they are already the rounded `(range, azimuth)` index,
+  because range and azimuth are computed from the solve rather than from an affine relation — there is
+  no intermediate coordinate to hold. So `pixel_index` applies to the projected path only; a radar
+  caller reads this field directly.
 - `xunit`, `yunit`: unit vectors along the image's two axes, expressed in grid coordinates.
 - `xlen`, `ylen`: length in grid coordinates of a one-pixel step along each image axis. The
   physical pixel size at this point, which differs from the nominal spacing wherever the
@@ -122,6 +127,10 @@ end
 
 Zero-based pixel index of the point in the image, rounded to the nearest whole pixel.
 
+Projected path only, by signature: it inverts the affine relation between image coordinates and pixel
+indices, which a radar acquisition has no analogue of. There, the index comes out of the solve — see
+[`PointGeometry`](@ref) on what `image_xy` holds on each path.
+
 Matches `geogridOptical.cpp:723-724`. Uses [`cround`](@ref) — halves away from zero — because the
 reference rounds here in C++, not in NumPy. The result is `Float64` so the bounds test that
 follows sees exactly the value the reference tests, before any integer conversion.
@@ -132,15 +141,18 @@ follows sees exactly the value the reference tests, before any integer conversio
 end
 
 """
-    inbounds(xind, yind, c::ProjectedCoordinate) -> Bool
+    inbounds(xind, yind, c::AbstractImageCoordinate) -> Bool
 
 Whether a zero-based pixel index falls inside the image.
 
-Matches `geogridOptical.cpp:775`, which tests `xind > nPixels - 1 | xind < 0` on the pre-conversion
-`Float64`. A `NaN` index — reachable when the transform is fed a `NaN` elevation — compares false
-in every direction and so is reported *in* bounds, as the reference reports it. See `REFERENCE.md`.
+`geogridOptical.cpp:775` and `geogridRadar.cpp:1112` write the same expression against their own
+size fields, so one method serves both paths through [`nsamples`](@ref) and [`nlines`](@ref).
+
+The comparison is on the pre-conversion `Float64`. A `NaN` index — reachable when the transform is fed
+a `NaN` elevation — compares false in every direction and so is reported *in* bounds, as the reference
+reports it. See `REFERENCE.md`.
 """
-@inline function inbounds(xind::Float64, yind::Float64, c::ProjectedCoordinate)
+@inline function inbounds(xind::Float64, yind::Float64, c::AbstractImageCoordinate)
     return !((xind > nsamples(c) - 1) | (xind < 0) | (yind > nlines(c) - 1) | (yind < 0))
 end
 
