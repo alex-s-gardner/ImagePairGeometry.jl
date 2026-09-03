@@ -26,8 +26,13 @@ the exactness standard held against it, and every deliberate divergence.
 
 ## Status
 
-The projected-coordinate path is implemented and verified against the compiled reference. The radar
-path is not: [`RadarCoordinate`](@ref) exists so the dispatch shape is settled, and throws.
+The projected-coordinate path is implemented and verified against the compiled reference.
+
+The radar path is partially built. Its numerics are in place and verified against isce3 — the
+reference ellipsoid, orbit interpolation, the zero-Doppler solve, and the radar-to-ground
+transformation. What is not yet built is the layer above them: [`RadarCoordinate`](@ref) still
+throws, so there is no radar entry point to the per-point kernel. `RADAR_PLAN.md` tracks the
+remaining work.
 
 ## Walkthrough
 

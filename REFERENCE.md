@@ -168,14 +168,20 @@ consequences, all reproduced:
 ### The y sign convention belongs to the correlator, not the operator
 
 `pixel_offset` returns a displacement along the *image* axes, where `+y` points down a north-up
-raster, while the displacement-to-velocity operator expects `+y` pointing north. The reference
-negates between the two outside geogrid — at `testautoRIFT.py:407` for the prior it supplies, and
-at `:790` for the displacement it receives back. So converting a velocity to pixels and straight
-back through the operator returns `vy` with the sign flipped; I confirmed the reference's own
-arithmetic does the same, returning −240.66 m/yr for an input of +250.
+raster, while the displacement-to-velocity operator expects `+y` pointing north. So converting a
+velocity to pixels and straight back through the operator returns `vy` with the sign flipped; I
+confirmed the reference's own arithmetic does the same, returning −240.66 m/yr for an input of +250.
 
-Both are reproduced as they are. A caller pairing this package with a correlator must apply the
-negation, which the `AutoRIFT` extension does in one clearly named place.
+Reproduced as it is. A caller pairing this package with a correlator must apply the negation, which
+the `AutoRIFT` extension does in one clearly named place.
+
+The negation the reference performs outside geogrid — `testautoRIFT.py:405-407` on the prior it
+supplies, `:790-791` on the displacement it receives back — is **radar-only**: both sites are guarded
+on `optical_flag == 0`, and `:405`'s comment gives the reason, *"convert azimuth offset to vertical
+offset as used in autoRIFT convention."* Azimuth increases along the track while autoRIFT's `Dy`
+points down a north-up raster. The projected path's `+y`-down convention comes from the raster
+geometry itself and needs no negation, so the extension dispatches on the coordinate type rather than
+applying one shared rule.
 
 ### `cross_check` is 90° less the terrain slope angle
 
@@ -206,19 +212,112 @@ The reference builds its transforms with `osr.CoordinateTransformation` on SRSs 
 `ImportFromEPSG`, i.e. `always_xy = false`. For projected-to-projected this makes no difference,
 but the construction is matched rather than "corrected" to `always_xy = true`.
 
-## Not yet implemented
+## The radar path
 
-The radar path (`RadarCoordinate`). It needs a pure-Julia port of isce3's Hermite orbit
-interpolation, the 51-iteration `geo2rdr` Newton solve, and the 10-iteration range-Doppler solve.
-The type exists and throws so the dispatch shape is fixed.
+The numerics are implemented and verified against isce3: the reference ellipsoid and TCN basis, the
+Hermite orbit interpolation, the 51-iteration `geo2rdr` solve, and `rdr2geo`. The layer above them is
+not built — `RadarCoordinate` still throws, so there is no radar entry to the per-point kernel. The
+remaining work, and the reproduced quirks it will need, are tracked in `RADAR_PLAN.md`.
 
-Two things to carry into that work:
+### Why the radar numerics are transcribed rather than delegated
 
-- `geogridRadar.cpp:912,971` computes `rngpix` at the top of the Newton loop from the *previous*
-  iteration's satellite position, so the slant range used for the range index is one step stale
-  relative to the converged time. Reproduce the staleness.
-- `geogridRadar.cpp:508-512` leaves `nodata` uninitialized when `vxname` is empty while
-  `csminxname` is set. Refuse that configuration rather than reproduce it.
+The reference sets `a = 6378137.0` and `e2 = 0.0066943799901` (`geogridRadar.cpp:324-325`) — the
+latter a truncation of WGS84's `6.69437999014e-3` at eight significant digits — and converts ECEF to
+geodetic by Vermeille's 2002 closed form. A geodesy library uses the full-precision datum and a
+different formulation, so it agrees to about 1e-9 and not to the bit. The radar path's integer
+outputs are `std::round` of quantities computed through these conversions, so the last bits decide a
+range index sitting near a `.5` boundary.
+
+Geodesy.jl is in the test environment for the opposite purpose: as an independent implementation to
+check the transcription against at 1e-9. A fixture generated from isce3 cannot distinguish a correct
+transcription from a faithful transcription of a misreading; a second, unrelated formulation can.
+
+### Radar numerics agreement
+
+Bitwise where it is achievable, and bounded in meters where it is not. Each bound below has an
+identified cause and is asserted in `test/radar_numerics.jl`, with the observed maximum reported on
+every run.
+
+| quantity | agreement | cause where not bitwise |
+|---|---|---|
+| `lonlat_to_xyz` | **bitwise**, all cases | — |
+| `xyz_to_lonlat` height | **bitwise**, all cases | — |
+| `xyz_to_lonlat` angles | ≤ 1 ULP | `atan2`: openlibm vs the platform libm |
+| Hermite position | bitwise on 10 of 11 cases, else 1 ULP | contraction in isce3's accumulation |
+| Hermite velocity | 4e-14 relative | contraction, amplified by cancellation in `g0` |
+| `rdr2geo` | ≤ 7 ULP in angle, **1.9e-9 m on the ground** | the two above, propagated |
+
+Two causes, both established by measurement rather than inferred.
+
+*`atan2` is not the same function in both.* Julia's `atan` is openlibm's and the reference's resolves
+to the platform libm's; they differ in the last bit for some arguments — 2 of the 12 ellipsoid
+fixture cases. Confirmed by calling the system `atan2` through `ccall`, which reproduces the
+fixture's longitude bitwise on every case. Everything upstream of the two `atan2` calls is bitwise,
+which is why the height — computed without inverse trigonometry — is bitwise throughout.
+
+openlibm is kept rather than `ccall`ing the platform function, and the reason is measured: neither
+library is correctly rounded. Against a 256-bit evaluation of the same expressions, openlibm is nearer
+the true value on one fixture case, the platform libm on three, and they agree on the rest — both are
+faithful to within one ULP and neither dominates. Switching would therefore buy agreement with one
+machine's libm rather than accuracy, and would give up the one guarantee available here: openlibm
+returns the same value on every platform. Since PROJ already denies this package bit-reproducibility
+across platforms on the projected path, adding a second source of platform dependence to gain the last
+bit on macOS — while still missing it on Linux — is the worse trade.
+
+*Contraction reaches the Hermite velocity through a cancellation.* isce3 is compiled with
+floating-point contraction; Julia rounds each operation. The velocity weight `g0` is
+`2 * (f0 * hdot - s * h)`, a difference of two products each larger than their difference, so the two
+evaluations diverge there at a relative scale the position weights never reach. Established as
+contraction and not a transcription error by an independent NumPy implementation of the same formula,
+which disagrees with isce3 in exactly the same cases and directions and agrees with this package.
+Inserting `fma` into the accumulation moves the worst ULP count from 80896 to 43911 without closing
+it, so the pattern is not one `fma` site and matching it would mean matching a compiler's choices.
+
+The bound that carries the weight is the last row: 1.9e-9 m of ground position, which is 8e-10 of a
+range sample. A ULP count is the wrong unit for a value whose inputs already differ in their last
+bits; where the result is spent is as a ground position feeding a range and azimuth index.
+
+### `geo2rdr` converges linearly, so its iteration count is load-bearing
+
+`geogridRadar.cpp:949` runs a fixed 51 iterations with no convergence test and no residual
+threshold. That looks like overkill for a Newton solve and is not, because it is not a Newton solve:
+`fnprime` is `-v · v` (`:959`), dropping the acceleration term `(target − sat) · a` of the true
+derivative. The result converges *linearly*, at a measured factor of about 10.9 per iteration.
+
+From a scene-center start about 60 s from the answer that means roughly 15 iterations to reach
+machine precision — at iteration 4 the estimate is still 4 ms off, where a quadratic method would be
+exact. Past convergence it does not settle but oscillates at the 1e-12 s level, since the step at a
+fixed point need not round to zero. Both facts make the count unlowerable: truncating early changes
+the answer, and truncating late changes the last bits.
+
+### The two time scales are two clocks
+
+`geogridRadar.cpp:906-911` carries `tline` and `tlined` and gives both the same Newton increment each
+iteration. Only `tlined` reaches the orbit interpolator; only `tline` reaches the azimuth index.
+
+They hold the same instant on two different clocks, which is why both are needed:
+
+- `sensingStart` is **seconds since midnight** of the acquisition day. `GeogridRadar.py:328-330`
+  computes it that way and `setAzimuthParameters` (`bindings/geogridRadarmodule.cpp:150-160`) stores
+  it. So `tmid = sensingStart + 0.5 * nLines / prf` (`:328`), which initializes `tline`, is on that
+  clock — the one `azind` is measured against (`:972`).
+- `tmids` (`GeogridRadar.py:347`) is an absolute UTC timestamp string, parsed to `secondsSinceEpoch()`
+  (`:432`), which initializes `tlined`. That is the orbit's clock.
+
+`tline - tlined` is therefore a constant epoch offset. The two initialization expressions look like
+they disagree by one pulse interval — `0.5 * nLines / prf` against
+`(floor(nLines / 2) - 1) / prf` — but they are in different coordinate systems and comparing them
+directly is meaningless.
+
+Their difference is preserved to rounding rather than to the bit: each subtraction rounds to its own
+exponent, so scales separated by a large epoch offset drift by an ULP of the times, about 1e-13 s per
+iteration. At 51 iterations that is under 1e-8 of an azimuth line. A zero offset is preserved exactly.
+
+### Carried into the remaining radar work
+
+- `geogridRadar.cpp:508-512` leaves `nodata` uninitialized when `vxname` is empty while `csminxname`
+  is set. Refuse that configuration rather than reproduce it — reading an uninitialized double is not
+  a behavior with a value to match.
 - `acos` differs by 1 ULP between openlibm and the system libm, which cannot flip a projected-path
   output — `cross_check` sits at 82–90°, far from its `> 1.0` gate — but radar geometry is oblique
   and can approach it.

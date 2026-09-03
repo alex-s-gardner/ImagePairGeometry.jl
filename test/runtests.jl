@@ -18,6 +18,7 @@ const HAVE_AUTORIFT = Base.identify_package("AutoRIFT") !== nothing
     @time @testset "coregister" begin include("coregister.jl") end
     @time @testset "window" begin include("window.jl") end
     @time @testset "kernel" begin include("kernel.jl") end
+    @time @testset "radar numerics vs isce3" begin include("radar_numerics.jl") end
     @time @testset "geogrid vs reference" begin include("geogrid.jl") end
     @time @testset "blocks and threads" begin include("blocks.jl") end
     @time @testset "interpolated transform" begin include("interpolate.jl") end
