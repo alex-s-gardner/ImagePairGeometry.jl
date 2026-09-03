@@ -194,15 +194,16 @@ by its reciprocal, so [`unitvec3`](@ref) serves both.
 end
 
 """
-    nadir_sphere(el::Ellipsoid, pos) -> NTuple{3,Float64}
+    nadir_sphere(el::Ellipsoid, pos) -> NTuple{4,Float64}
 
-`(radius, height, eta)` for the sphere osculating the ellipsoid beneath the satellite at ECEF
-position `pos`.
+`(radius, height, eta, sat_dist)` for the sphere osculating the ellipsoid beneath the satellite at
+ECEF position `pos`.
 
 `radius` is the local radius directly below the satellite and `height` the satellite's height above
-it; `eta` is the scale factor relating the two to the geocentric distance. The range-Doppler solve
-iterates on a target height measured from this sphere rather than from the ellipsoid, which is why
-it needs all three.
+it; `eta` is the scale factor relating the two to the geocentric distance `sat_dist`. The
+range-Doppler solve iterates on a target height measured from this sphere rather than from the
+ellipsoid, which is why it needs all of them — `sat_dist` is returned rather than left to the caller
+to recompute, since it is `norm3(pos)` and already in hand here.
 
 `geogridRadar.cpp:1016-1024` and `Rdr2Geo.icc:69-79` agree term for term.
 """
@@ -214,5 +215,5 @@ it needs all three.
     # gauge of the position rather than a Euclidean length.
     temp = SVector{3,Float64}(pos[1] / major, pos[2] / major, pos[3] / minor)
     eta = 1.0 / norm3(temp)
-    return (eta * sat_dist, (1.0 - eta) * sat_dist, eta)
+    return (eta * sat_dist, (1.0 - eta) * sat_dist, eta, sat_dist)
 end

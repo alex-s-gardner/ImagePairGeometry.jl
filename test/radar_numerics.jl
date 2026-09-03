@@ -248,6 +248,15 @@ end
 
 const ORB = fixture_orbit()
 
+"""The radar wavelength and look side the fixture cases were generated with."""
+const WVL = fx(RFIX.rdr2geo.wavelength)
+fixture_side(c) = c.side == "right" ? LookRight : LookLeft
+
+# The scene-center start every `geo2rdr` solve below begins from, as the reference does — it uses the
+# scene midpoint for every grid point rather than a per-point estimate.
+const TMID = 0.5 * (starttime(ORB) + stoptime(ORB))
+const PM, VM = interpolate(ORB, TMID)
+
 @testset "orbit construction" begin
     @test length(ORB) == RFIX.orbit.spec.n
     @test ORB.spacing === fx(RFIX.orbit.spec.spacing)
@@ -384,14 +393,13 @@ end
     # The bound that matters is the one in meters. A ULP of longitude is not a unit anyone cares
     # about; where the result is spent is as a ground position feeding a range and azimuth index, so
     # that is what is bounded here: under 1e-8 m, which is under 1e-9 of a range sample.
-    wvl = fx(RFIX.rdr2geo.wavelength)
     worst_ulp = 0
     worst_ground = 0.0
     dr = fx(RFIX.radar.dr)
     for c in RFIX.rdr2geo.cases
-        side = c.side == "right" ? LookRight : LookLeft
+        side = fixture_side(c)
         got = rdr2geo(ORB, EL, fx(c.t), fx(c.range);
-                      height = fx(c.height), wavelength = wvl, side)
+                      height = fx(c.height), wavelength = WVL, side)
         want = fv(c.llh)
 
         for k in 1:2
@@ -410,11 +418,10 @@ end
 end
 
 @testset "rdr2geo lands on the range sphere at zero Doppler" begin
-    wvl = fx(RFIX.rdr2geo.wavelength)
     for c in RFIX.rdr2geo.cases
-        side = c.side == "right" ? LookRight : LookLeft
+        side = fixture_side(c)
         t, rng = fx(c.t), fx(c.range)
-        llh = rdr2geo(ORB, EL, t, rng; height = fx(c.height), wavelength = wvl, side)
+        llh = rdr2geo(ORB, EL, t, rng; height = fx(c.height), wavelength = WVL, side)
 
         target = lonlat_to_xyz(EL, llh)
         pos, vel = interpolate(ORB, t)
@@ -430,14 +437,13 @@ end
 end
 
 @testset "the two look sides land on opposite sides of the track" begin
-    wvl = fx(RFIX.rdr2geo.wavelength)
     t, rng = 120.0, 8.6e5
     pos, vel = interpolate(ORB, t)
     b = geodetic_tcn(pos, vel)
 
-    right = lonlat_to_xyz(EL, rdr2geo(ORB, EL, t, rng; height = 0.0, wavelength = wvl,
+    right = lonlat_to_xyz(EL, rdr2geo(ORB, EL, t, rng; height = 0.0, wavelength = WVL,
                                       side = LookRight))
-    left = lonlat_to_xyz(EL, rdr2geo(ORB, EL, t, rng; height = 0.0, wavelength = wvl,
+    left = lonlat_to_xyz(EL, rdr2geo(ORB, EL, t, rng; height = 0.0, wavelength = WVL,
                                      side = LookLeft))
 
     # The cross-track component of the look vector flips sign, and nothing else does.
@@ -447,11 +453,10 @@ end
 end
 
 @testset "rdr2geo converges" begin
-    wvl = fx(RFIX.rdr2geo.wavelength)
     for c in RFIX.rdr2geo.cases
-        side = c.side == "right" ? LookRight : LookLeft
+        side = fixture_side(c)
         _, conv = rdr2geo_converged(ORB, EL, fx(c.t), fx(c.range);
-                                    height = fx(c.height), wavelength = wvl, side)
+                                    height = fx(c.height), wavelength = WVL, side)
         @test conv
     end
 end
@@ -462,18 +467,15 @@ end
 # as the inverse of `rdr2geo`, which does: a target placed at a known time and range must be
 # recovered at that time and range.
 @testset "geo2rdr inverts rdr2geo" begin
-    wvl = fx(RFIX.rdr2geo.wavelength)
     # Start every solve from the same mid-orbit guess, as the reference does — it uses the scene
     # midpoint for every grid point rather than a per-point initial estimate.
-    tmid = 0.5 * (starttime(ORB) + stoptime(ORB))
-    pm, vm = interpolate(ORB, tmid)
 
     for c in RFIX.rdr2geo.cases
-        side = c.side == "right" ? LookRight : LookLeft
+        side = fixture_side(c)
         t, rng = fx(c.t), fx(c.range)
         target = lonlat_to_xyz(EL, fv(c.llh))
 
-        p = geo2rdr(ORB, target, tmid, tmid, pm, vm)
+        p = geo2rdr(ORB, target, TMID, TMID, PM, VM)
 
         # Nanosecond agreement on a time reached by Newton from 60 s away.
         @test abs(p.aztime - t) < 1e-9
@@ -486,11 +488,9 @@ end
 end
 
 @testset "geo2rdr reaches zero Doppler" begin
-    tmid = 0.5 * (starttime(ORB) + stoptime(ORB))
-    pm, vm = interpolate(ORB, tmid)
     for c in RFIX.rdr2geo.cases
         target = lonlat_to_xyz(EL, fv(c.llh))
-        p = geo2rdr(ORB, target, tmid, tmid, pm, vm)
+        p = geo2rdr(ORB, target, TMID, TMID, PM, VM)
         # The condition the solve is driving to zero, normalized so the tolerance is dimensionless.
         @test abs(dot3(p.look, p.velocity)) / (norm3(p.look) * norm3(p.velocity)) < 1e-11
     end
@@ -509,22 +509,20 @@ end
     #
     # So the bound is stated absolutely, and in the unit the offset is eventually spent in: fractions
     # of an azimuth line.
-    tmid = 0.5 * (starttime(ORB) + stoptime(ORB))
-    pm, vm = interpolate(ORB, tmid)
     target = lonlat_to_xyz(EL, fv(RFIX.rdr2geo.cases[1].llh))
     prf = fx(RFIX.radar.prf)
 
     worst_lines = 0.0
     for offset in (0.0, 1.0 / prf, -3.5, 1e5)
-        p = geo2rdr(ORB, target, tmid + offset, tmid, pm, vm)
+        p = geo2rdr(ORB, target, TMID + offset, TMID, PM, VM)
         drift = abs((p.aztime - p.orbittime) - offset)
-        # An ULP of `tmid` per iteration, at most.
-        @test drift < GEO2RDR_ITERATIONS * eps(max(abs(tmid) + abs(offset), 1.0))
+        # An ULP of `TMID` per iteration, at most.
+        @test drift < GEO2RDR_ITERATIONS * eps(max(abs(TMID) + abs(offset), 1.0))
         @test drift * prf < 1e-8
         worst_lines = max(worst_lines, drift * prf)
     end
     # A zero offset is the production case, and it is preserved exactly.
-    p0 = geo2rdr(ORB, target, tmid, tmid, pm, vm)
+    p0 = geo2rdr(ORB, target, TMID, TMID, PM, VM)
     @test p0.aztime === p0.orbittime
     @info "geo2rdr time-scale drift" worst_azimuth_lines = worst_lines
 end
@@ -539,14 +537,12 @@ end
     # start about 60 s from the answer it takes roughly 15 iterations to reach machine precision,
     # after which the estimate oscillates at the 1e-12 level rather than settling. Both facts make
     # `GEO2RDR_ITERATIONS` unlowerable without changing outputs.
-    tmid = 0.5 * (starttime(ORB) + stoptime(ORB))
-    pm, vm = interpolate(ORB, tmid)
     c1 = RFIX.rdr2geo.cases[1]
     target = lonlat_to_xyz(EL, fv(c1.llh))
     t_true = fx(c1.t)
 
     function solve_n(n)
-        satx, satv, az = pm, vm, tmid
+        satx, satv, az = PM, VM, TMID
         look = target - satx
         rng = norm3(look)
         for _ in 1:n
@@ -559,7 +555,7 @@ end
     end
 
     az51, rng51 = solve_n(GEO2RDR_ITERATIONS)
-    p = geo2rdr(ORB, target, tmid, tmid, pm, vm)
+    p = geo2rdr(ORB, target, TMID, TMID, PM, VM)
     @test p.aztime === az51
     @test p.range === rng51
     @test GEO2RDR_ITERATIONS == 51
@@ -583,14 +579,12 @@ end
 end
 
 @testset "range and azimuth indices" begin
-    tmid = 0.5 * (starttime(ORB) + stoptime(ORB))
-    pm, vm = interpolate(ORB, tmid)
     r = RFIX.radar
     dr, prf, sr = fx(r.dr), fx(r.prf), fx(r.starting_range)
 
     c = RFIX.rdr2geo.cases[1]
     target = lonlat_to_xyz(EL, fv(c.llh))
-    p = geo2rdr(ORB, target, tmid, tmid, pm, vm)
+    p = geo2rdr(ORB, target, TMID, TMID, PM, VM)
 
     ri = range_index(p, sr, dr)
     ai = azimuth_index(p, 0.0, prf)

@@ -118,7 +118,9 @@ function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Rea
     # reference uses, which makes `alpha` reduce to the pure geometric term.
     dopfact = 0.5 * Float64(wavelength) * Float64(doppler) * r / vmag
 
-    radius, sat_height, _ = nadir_sphere(el, pos)
+    # `a` is the satellite's geocentric distance, constant across the iteration, so it comes out of
+    # `nadir_sphere` — which computes it anyway — rather than being recomputed per candidate height.
+    radius, sat_height, _, a = nadir_sphere(el, pos)
 
     ndotv = dot3(tcn.nhat, vhat)
     vdott = dot3(vhat, tcn.that)
@@ -126,7 +128,6 @@ function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Rea
     # A candidate target height above the local sphere gives a look angle, hence a position on the
     # range sphere, hence a location.
     update_llh = function (h::Float64)
-        a = norm3(pos)
         b = radius + h
         cos_theta = 0.5 * (a / r + r / a - (b / a) * (b / r))
         sin_theta = sqrt(1.0 - cos_theta * cos_theta)

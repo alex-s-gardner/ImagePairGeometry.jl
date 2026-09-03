@@ -15,7 +15,14 @@ using StaticArrays: SVector
 const EL = Ellipsoid()
 const WVL = 0.05546576
 
-"""A near-polar circular orbit, as the fixtures use."""
+"""
+A near-polar circular orbit.
+
+The same parameters `test/reference/gen_radar_numerics.py` generates its fixture orbit from, so a
+timing here is measured on the geometry the correctness tests assert against. Duplicated rather than
+shared because the fixture side is a Python generator and the committed JSON is its output — reading
+that JSON here would make the benchmark depend on the test fixtures.
+"""
 function testorbit(; n = 25, spacing = 10.0)
     R = 7.0e6
     w = sqrt(3.986004418e14 / R^3)
@@ -37,47 +44,43 @@ const TARGET = lonlat_to_xyz(EL, LLH)
 println("Per-point cost of the radar numerics (minimum of a benchmark sample)\n")
 println(rpad("stage", 34), lpad("ns", 12), lpad("bytes", 8))
 
-# Every argument is interpolated with `$` so the benchmarked call sees runtime values. Passing a
-# closure over `const` globals instead lets the compiler fold the whole call to a literal and report
-# 1 ns for arithmetic that cannot be that fast.
-let
-    b = @benchmark lonlat_to_xyz($EL, $LLH)
-    println(rpad("lonlat_to_xyz", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(lonlat_to_xyz(EL, LLH)), 8))
+"""One table row: the stage's minimum time and its allocation."""
+row(label, b, bytes) =
+    println(rpad(label, 34), lpad(round(minimum(b).time; digits = 1), 12), lpad(bytes, 8))
 
-    b = @benchmark xyz_to_lonlat($EL, $TARGET)
-    println(rpad("xyz_to_lonlat", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(xyz_to_lonlat(EL, TARGET)), 8))
+# Each `@benchmark` interpolates its arguments with `$` so the benchmarked call sees runtime values.
+# Collecting the stages into a table of closures instead lets the compiler fold each call to a literal
+# and report 1 ns for arithmetic that cannot be that fast — which is why these are written out rather
+# than looped over.
+const T_INTERP, T_SOLVE = let
+    row("lonlat_to_xyz", (@benchmark lonlat_to_xyz($EL, $LLH)),
+        @allocated(lonlat_to_xyz(EL, LLH)))
 
-    b = @benchmark geodetic_tcn($PM, $VM)
-    println(rpad("geodetic_tcn", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(geodetic_tcn(PM, VM)), 8))
+    row("xyz_to_lonlat", (@benchmark xyz_to_lonlat($EL, $TARGET)),
+        @allocated(xyz_to_lonlat(EL, TARGET)))
 
-    b = @benchmark nadir_sphere($EL, $PM)
-    println(rpad("nadir_sphere", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(nadir_sphere(EL, PM)), 8))
+    row("geodetic_tcn", (@benchmark geodetic_tcn($PM, $VM)),
+        @allocated(geodetic_tcn(PM, VM)))
 
-    b = @benchmark interpolate($ORB, $(122.5))
-    println(rpad("interpolate (one orbit eval)", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(interpolate(ORB, 122.5)), 8))
+    row("nadir_sphere", (@benchmark nadir_sphere($EL, $PM)),
+        @allocated(nadir_sphere(EL, PM)))
 
-    b = @benchmark geo2rdr($ORB, $TARGET, $TMID, $TMID, $PM, $VM)
-    println(rpad("geo2rdr (51 iterations)", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(geo2rdr(ORB, TARGET, TMID, TMID, PM, VM)), 8))
+    interp = @benchmark interpolate($ORB, $(122.5))
+    row("interpolate (one orbit eval)", interp, @allocated(interpolate(ORB, 122.5)))
 
-    b = @benchmark rdr2geo($ORB, $EL, $(120.0), $(8.5e5); height = $(500.0),
-                           wavelength = $WVL, side = $LookRight)
-    println(rpad("rdr2geo", 34), lpad(round(minimum(b).time; digits = 1), 12),
-            lpad(@allocated(rdr2geo(ORB, EL, 120.0, 8.5e5; height = 500.0, wavelength = WVL,
-                                    side = LookRight)), 8))
+    solve = @benchmark geo2rdr($ORB, $TARGET, $TMID, $TMID, $PM, $VM)
+    row("geo2rdr (51 iterations)", solve, @allocated(geo2rdr(ORB, TARGET, TMID, TMID, PM, VM)))
+
+    row("rdr2geo", (@benchmark rdr2geo($ORB, $EL, $(120.0), $(8.5e5); height = $(500.0),
+                                       wavelength = $WVL, side = $LookRight)),
+        @allocated(rdr2geo(ORB, EL, 120.0, 8.5e5; height = 500.0, wavelength = WVL,
+                           side = LookRight)))
+
+    (minimum(interp).time, minimum(solve).time)
 end
 
-# What fraction of `geo2rdr` is orbit interpolation? That is the number that decides whether the
-# radar path is worth caching across pairs over one footprint.
-let
-    interp = minimum(@benchmark interpolate($ORB, 122.5)).time
-    solve = minimum(@benchmark geo2rdr($ORB, $TARGET, $TMID, $TMID, $PM, $VM)).time
-    share = GEO2RDR_ITERATIONS * interp / solve
-    println("\ngeo2rdr: ", GEO2RDR_ITERATIONS, " orbit evaluations account for ",
-            round(100 * share; digits = 1), "% of the solve")
-end
+# What fraction of `geo2rdr` is orbit interpolation? That is the number that decides whether the radar
+# path is worth caching across pairs over one footprint. Both timings come from the table above rather
+# than from a second measurement of the same two calls.
+println("\ngeo2rdr: ", GEO2RDR_ITERATIONS, " orbit evaluations account for ",
+        round(100 * GEO2RDR_ITERATIONS * T_INTERP / T_SOLVE; digits = 1), "% of the solve")
