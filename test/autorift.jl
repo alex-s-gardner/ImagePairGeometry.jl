@@ -31,19 +31,27 @@ function ar_case(; csminy = 360.0, ssm = 1.0)
     return r, grid, pair, win
 end
 
-@testset "the y prior's sign depends on the coordinate system" begin
+@testset "the y prior's sign comes from the result's coordinate" begin
     # The radar path negates the azimuth prior to reach AutoRIFT's north-up convention
-    # (`testautoRIFT.py:405-407`, under `optical_flag == 0`); the projected path does not. Guessing
-    # would be wrong half the time and silently so, so `coordinate` is required.
+    # (`testautoRIFT.py:405-407`, under `optical_flag == 0`); the projected path does not. A wrong
+    # sign is silent — the correlator searches the wrong way and returns a plausible velocity — so the
+    # sign is read off the coordinate the result carries rather than being asked for or guessed.
     r, _, pair, _ = ar_case()
-    @test_throws "pass `coordinate`" AutoRIFT.pointset(r; pixel_size = 30.0)
+
+    # No keyword needed: the result knows which path produced it.
+    @test AutoRIFT.pointset(r; pixel_size = 30.0) isa AutoRIFT.PointSet{2}
+    @test r.coordinate === pair.coordinate
+
+    # Passing it explicitly agrees with the default.
+    proj = AutoRIFT.pointset(r; pixel_size = 30.0, coordinate = pair.coordinate)
+    @test proj.dy_prior == AutoRIFT.pointset(r; pixel_size = 30.0).dy_prior
+
+    # Something that is not a coordinate is still refused rather than silently signed.
     @test_throws "must be a ProjectedCoordinate" AutoRIFT.pointset(r; pixel_size = 30.0,
                                                                    coordinate = 42)
 
-    proj = AutoRIFT.pointset(r; pixel_size = 30.0, coordinate = pair.coordinate)
-    # A radar coordinate is not available here without an orbit, so the sign itself is checked
-    # through the helper, and the prior's use of it through the projected path above.
     @test AR_EXT._prior_sign(pair.coordinate) === 1.0
+    @test velocity_conversion(r).dy_sign === 1.0
     @test velocity_conversion(r; coordinate = pair.coordinate).dy_sign === 1.0
     @test all(>=(0), filter(!iszero, proj.dy_prior)) ||
           all(<=(0), filter(!iszero, proj.dy_prior))
