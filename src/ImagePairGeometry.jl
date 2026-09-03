@@ -45,6 +45,12 @@ export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
+# The radar numerics: self-contained, and used by nothing else yet. `ellipsoid.jl` needs the
+# three-vector primitives above; the rest build on it in order.
+include("radar/ellipsoid.jl")
+include("radar/orbit.jl")
+include("radar/geo2rdr.jl")
+include("radar/rdr2geo.jl")
 include("coordinates.jl")
 include("transforms.jl")
 include("pair.jl")
