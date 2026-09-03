@@ -40,8 +40,12 @@ function setup(tf; imagesize = (3000, 3000), spacing = 120.0)
     return (; grid, pair, win, source = InMemoryInputs(inputs, win))
 end
 
-function measure(name, tf)
-    s = setup(tf)
+# `scene` is given for a lattice transform: `InterpolatedTransform` is built *for* a grid and window,
+# so deriving a fresh scene from it here would size the lattice against one grid and measure it on
+# another. Every mode below therefore runs on the exact path's own scene, which is also what makes the
+# per-point times comparable.
+function measure(name, tf; scene = nothing)
+    s = scene === nothing ? setup(tf) : scene
     go = () -> pairgeometry_blocked(s.grid, s.pair, s.source; transform = tf, window = s.win,
                                     blocksize = (256, 256), ntasks = 1,
                                     nodata = nodata_from(-32767.0))
@@ -56,6 +60,19 @@ println("Per-point cost by transform, serial\n")
 identity_ns = measure("identity (0 PROJ/pt)", IdentityTransform())
 proj_ns = measure("cross-CRS (3 PROJ/pt)", ProjTransformFactory(3413, 32624))
 
+# The lattice modes, against the exact cross-CRS run above. `:hybrid` keeps one call per point, so its
+# speedup saturates; `:full` keeps paying as the lattice coarsens. Accuracy per mode and spacing is in
+# `docs/interpolated-transform.md`.
+println()
+let factory = ProjTransformFactory(3413, 32624), s = setup(factory)
+    for mode in (:hybrid, :full), lattice in (2, 4, 8), kern in (Bilinear(), Bicubic())
+        tf = InterpolatedTransform(factory, s.grid, s.pair; lattice, mode,
+                                   interpolation = kern, window = s.win)
+        ns = measure("$mode lattice=$lattice $(nameof(typeof(kern)))", tf; scene = s)
+        @printf("%-24s %.2fx vs exact\n", "", proj_ns / ns)
+    end
+end
+
 @printf("\nPROJ share of a cross-CRS run : %5.1f%%\n", 100 * (proj_ns - identity_ns) / proj_ns)
 @printf("Amdahl ceiling on optimizing everything else : %.2fx\n",
         proj_ns / (proj_ns - identity_ns))
@@ -66,6 +83,8 @@ tuning the arithmetic around them. Two candidates were measured and rejected: ba
 `proj_trans_generic` is 1.00x (the cost is the projection math, not the call), and PROJ gains nothing
 from sequential over random points, so a row-ordered sweep buys nothing.
 
-Interpolating the transform on a coarse lattice is the one approach that does pay — 1.63x keeping every
-integer band bitwise, 9.2x if a one-pixel location difference is acceptable. Measured and written up in
-`docs/interpolated-transform.md`; not implemented, because bit-identical output is the default.""")
+Interpolating the transform on a coarse lattice is the approach that pays, and `InterpolatedTransform`
+is it. `:hybrid` keeps the forward transform exact, so the location bands stay bitwise, and saturates
+around 1.6x because the one remaining call is the floor. `:full` removes that floor and keeps paying as
+the lattice coarsens, at a one-pixel difference in the location bands. Accuracy per mode, spacing and
+band is in `docs/interpolated-transform.md`; the exact path remains the default.""")

@@ -123,3 +123,36 @@ the type is examined.
 isidentity(::IdentityTransform) = true
 isidentity(::Any) = false
 isidentity(p::TransformPair) = isidentity(p.forward) && isidentity(p.inverse)
+
+"""
+    AbstractTransformFactory
+
+Builds a fresh [`TransformPair`](@ref) each time it is called, as `factory()`.
+
+A blocked run calls it once per task, so each task owns a transform for its lifetime. That is what
+`Proj` needs: a `Proj.Transformation` wraps a `PJ*` on a context that PROJ documents as usable from
+one thread at a time, and building two concurrently on the shared global context corrupts its
+SQLite handle. The `Proj` extension's `ProjTransformFactory` is the implementation, and
+[`InterpolatedTransform`](@ref) is one that returns a lattice approximation.
+"""
+abstract type AbstractTransformFactory end
+
+# The single entry point taking anything a caller may supply and returning a `TransformPair`. Lives
+# here rather than beside its callers because it is the transform layer's own dispatch: both the
+# driver and the blocked driver resolve through it, and so does anything built on them.
+#
+# A transform or a pair is taken as given; a factory is invoked once per task.
+#
+# No `Any` fallback: a `Proj.Transformation` is not a `Base.Callable`, so a fallback would silently
+# invoke it as a zero-argument factory and fail somewhere unhelpful. Plain functions are accepted
+# too, dispatched on `Function` rather than `Base.Callable` — the latter includes `Type`, and both
+# `AbstractCoordTransform` and `TransformPair` are themselves callable, so a broader signature would
+# be ambiguous against them.
+_resolve_transform(t::AbstractCoordTransform) = transform_pair(t)
+_resolve_transform(p::TransformPair) = p
+_resolve_transform(factory::AbstractTransformFactory) = transform_pair(factory())
+_resolve_transform(factory::Function) = transform_pair(factory())
+_resolve_transform(x) = throw(ArgumentError(
+    "transform must be an AbstractCoordTransform, a TransformPair, an AbstractTransformFactory, " *
+    "or a zero-argument function returning one; got $(typeof(x)). Wrap a Proj.Transformation pair " *
+    "in TransformPair(fwd, inv), or use ProjTransformFactory so each task builds its own."))

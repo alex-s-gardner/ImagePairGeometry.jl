@@ -10,6 +10,10 @@
 # being compared where instead of leaving it implicit in a bare `Float64` threaded through the
 # kernel. The consequences are recorded in `REFERENCE.md`; `searchrange_scale` and the chip-size
 # path carry comments at the sites where the test fails to catch anything.
+#
+# `NaN` counts as missing too, which the reference's equality test does not catch. The ITS_LIVE
+# velocity rasters store `NaN` and declare `-32767`, so this is the case that actually arises on
+# production data rather than a hypothetical — see `ismissingval`.
 
 """
     NoDataPolicy(; input, output = -32767.0)
@@ -52,12 +56,16 @@ nodata_from(::Nothing; output = -32767.0) = NoDataPolicy(; input = 0.0, output)
 """
     ismissingval(p::NoDataPolicy, x) -> Bool
 
-Whether `x` is the missing-value sentinel.
+Whether `x` is missing: equal to the sentinel, or `NaN`.
 
-Exact equality, as the reference tests it. `NaN` is therefore never equal to the sentinel and
-propagates through the arithmetic instead of being masked.
+Equality is what the reference tests, and `NaN` is equal to nothing — but the ITS_LIVE velocity
+rasters *store* `NaN` while declaring a nodata of `-32767`, so on real data the reference's test
+never fires there and `NaN` reaches its arithmetic. `std::round(NaN)` converted to `GInt32` is
+undefined behavior, which arm64 clang resolves to `0` — the same value the reference writes from its
+own missing-velocity branch (`geogridOptical.cpp:800-805`). Treating `NaN` as missing therefore
+agrees with the reference bit for bit on the outputs while reaching it by a defined route.
 """
-@inline ismissingval(p::NoDataPolicy, x::Real) = Float64(x) == p.input
+@inline ismissingval(p::NoDataPolicy, x::Real) = (y = Float64(x); y == p.input || isnan(y))
 
 """
     NODATA_INT32

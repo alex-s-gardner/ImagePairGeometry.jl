@@ -26,6 +26,25 @@ The pixel displacement itself is estimated elsewhere, by a feature-tracking or c
 routine; this package supplies the geometry that routine searches within and the operator that
 converts its result to velocity.
 
+## Approximating the projection
+
+Where the grid and the imagery are in different CRSs, the projection library is most of the run: three
+calls per grid point, and a continental grid has hundreds of millions of them. `InterpolatedTransform`
+evaluates the transform on a coarse lattice and interpolates between the nodes, with a selectable
+kernel (`Bilinear`, `Bicubic`, `NearestNode`) and two modes:
+
+```julia
+tf = InterpolatedTransform(ProjTransformFactory(3413, 32624), grid, pair;
+                           lattice = 4, mode = :hybrid, window = win)
+r = pairgeometry_blocked(grid, pair, source; transform = tf, window = win, ntasks = 8)
+```
+
+`:hybrid` interpolates only the two inverse calls, keeping the pixel-location bands bitwise identical
+to the exact path, for about 1.6×. `:full` interpolates both directions for up to 6.9×, at a difference
+of at most one pixel in those bands. The exact path stays the default;
+[`docs/interpolated-transform.md`](docs/interpolated-transform.md) records the measured cost and
+accuracy of each mode, spacing and band.
+
 ## Citing
 
 See [`CITATION.bib`](CITATION.bib) for the relevant reference(s).

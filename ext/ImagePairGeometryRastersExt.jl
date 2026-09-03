@@ -32,10 +32,13 @@ const GFT = Rasters.GeoFormatTypes
 # Where a lookup coordinate sits within its pixel, as an offset from it to the pixel's outer edge.
 #
 # GDAL geotransforms and `MapGrid` put the origin at that edge, while an `ImageFootprint` origin is
-# the pixel *center*. A raster read from a GeoTIFF is `Intervals{Start}`, so its lookups are already
-# edges and the offset is zero — but one built in memory is typically `Points` or `Center`, and
-# treating its coordinates as edges would displace the whole grid by half a pixel. So the locus is
-# read rather than assumed.
+# the pixel *center*, so a lookup's convention has to be established before either can be built from
+# it.
+#
+# For a file-backed raster the geotransform is read from the file, which settles the question with no
+# inference — see `_file_geotransform`. Inference is needed only for a raster built in memory, and
+# there the sampling is what says which convention its coordinates follow.
+#
 # `Start` and `End` are the *low* and *high* edge of a cell in coordinate order, not the near and far
 # edge in index order. On a reverse-ordered axis — a north-up raster's Y, where the step is negative —
 # a `Start` lookup therefore holds the edge furthest from the geotransform origin, one whole step
@@ -49,7 +52,7 @@ _locus_offset(::Lk.Center, step) = -step / 2
 
 function _edge_offset(l, step)
     # `locus` is defined for `Intervals` sampling. A `Points` lookup names positions rather than
-    # spanning cells, which for a raster is the center convention.
+    # spanning cells, which for an in-memory raster is the center convention.
     loc = try
         Lk.locus(l)
     catch
@@ -59,14 +62,41 @@ function _edge_offset(l, step)
 end
 
 """
+    _file_geotransform(r) -> NTuple{6,Float64} or nothing
+
+`r`'s geotransform as GDAL reports it, or `nothing` for a raster not backed by a file.
+
+Preferred over deriving one from the lookups because it is the file's own answer. Rasters sets a
+lookup's sampling from the `AREA_OR_POINT` tag — `Points` for `Point`, `Intervals{Start}` for `Area`
+— while reporting the *same* coordinates either way, namely the geotransform's. So a raster tagged
+`AREA_OR_POINT=Point`, which both the ITS_LIVE parameter rasters and the Landsat scenes are, gets
+`Points` sampling with coordinates that are already pixel edges. Inferring the convention from the
+sampling would take those edges for centers and displace the grid half a pixel.
+"""
+function _file_geotransform(r)
+    path = Rasters.filename(r)
+    path === nothing && return nothing
+    return ArchGDAL.read(path) do ds
+        gt = ArchGDAL.getgeotransform(ds)
+        # Refuse a rotated grid here rather than silently dropping the rotation terms; `MapGrid`
+        # rejects them too, but this keeps the message about the file.
+        (iszero(gt[3]) && iszero(gt[5])) || throw(ArgumentError(
+            "$path has a rotated geotransform ($(gt[3]), $(gt[5])); this package's grid " *
+            "arithmetic assumes a north-up grid"))
+        (gt[1], gt[2], gt[3], gt[4], gt[5], gt[6])
+    end
+end
+
+"""
     ImagePairGeometry.mapgrid(dem::AbstractRaster) -> MapGrid
 
 A `MapGrid` describing `dem`'s grid.
 
-The grid's origin is the *outer edge* of the first pixel, the convention `MapGrid` and GDAL share. A
-raster read from a GeoTIFF is `Intervals{Start}`, so its lookups are already edges; one built in
-memory with a `Center` or point lookup is adjusted by half a pixel, since taking its coordinates for
-edges would offset every output by that much.
+The grid's origin is the *outer edge* of the first pixel, the convention `MapGrid` and GDAL share.
+For a raster backed by a file that is GDAL's geotransform, read from the file. For one built in
+memory the convention is inferred from the lookup's sampling, and a `Center` or point lookup is
+adjusted by half a pixel, since taking its coordinates for edges would offset every output by that
+much.
 
 A raster whose lookups are not regularly spaced is refused: the index arithmetic this package
 reproduces assumes a constant step.
@@ -74,8 +104,11 @@ reproduces assumes a constant step.
 function ImagePairGeometry.mapgrid(dem::AbstractRaster)
     x, y = dims(dem, X), dims(dem, Y)
     dx, dy = _step_of(x, :X), _step_of(y, :Y)
-    return MapGrid(geotransform = (Float64(first(x)) + _edge_offset(lookup(x), dx), dx, 0.0,
-                                   Float64(first(y)) + _edge_offset(lookup(y), dy), 0.0, dy),
+    gt = _file_geotransform(dem)
+    origin = gt === nothing ?
+        (Float64(first(x)) + _edge_offset(lookup(x), dx),
+         Float64(first(y)) + _edge_offset(lookup(y), dy)) : (gt[1], gt[4])
+    return MapGrid(geotransform = (origin[1], dx, 0.0, origin[2], 0.0, dy),
                    size = (length(x), length(y)),
                    crs = crs(dem))
 end
@@ -86,7 +119,8 @@ end
 An `ImageFootprint` describing where `image` sits, for `coregister`.
 
 Origin is the first pixel's *center*, which is what `ImageFootprint` documents and what the
-reference's `startingX`/`startingY` are — so a lookup holding edges is shifted half a pixel inward.
+reference's `startingX`/`startingY` are — so the pixel edge the geotransform names is shifted half a
+pixel inward.
 
 Only the geometry is read, never the pixels, so this is cheap on a disk-backed scene and needs no
 data at all.
@@ -94,10 +128,11 @@ data at all.
 function ImagePairGeometry.image_footprint(image::AbstractRaster)
     x, y = dims(image, X), dims(image, Y)
     dx, dy = _step_of(x, :X), _step_of(y, :Y)
-    # From the edge to the center: undo the edge offset, then add half a pixel.
-    cx = Float64(first(x)) + _edge_offset(lookup(x), dx) + dx / 2
-    cy = Float64(first(y)) + _edge_offset(lookup(y), dy) + dy / 2
-    return ImageFootprint(origin = (cx, cy), spacing = (dx, dy),
+    gt = _file_geotransform(image)
+    edge = gt === nothing ?
+        (Float64(first(x)) + _edge_offset(lookup(x), dx),
+         Float64(first(y)) + _edge_offset(lookup(y), dy)) : (gt[1], gt[4])
+    return ImageFootprint(origin = (edge[1] + dx / 2, edge[2] + dy / 2), spacing = (dx, dy),
                           size = (length(x), length(y)))
 end
 
@@ -123,6 +158,18 @@ Accepts the same eleven optional rasters as `GeometryInputs`, and each may be la
 disk-backed `Raster` is read one window at a time, so a grid larger than memory is never
 materialized. All must share the grid the geometry is computed on.
 
+Open each with `missingval = nothing`, so its stored values arrive unmasked:
+
+```julia
+param(name) = Raster(name; lazy = true, missingval = nothing)
+src = RasterInputs(dem = param("h.tif"), vx = param("vx.tif"), ...)
+```
+
+A raster whose element type admits `missing` is refused. Which value counts as missing is decided by
+`NoDataPolicy` from the DEM's sentinel — the reference applies that one sentinel to every raster —
+so a raster's own declared nodata is not it. The ITS_LIVE parameter rasters declare nodata `0` for
+chip size and stable surface and `32767` for search range, all of which are ordinary data here.
+
 Windows are indexed in grid coordinates, so the rasters must cover the whole grid, not just the
 window — which is the usual case, since the DEM is what defines the grid.
 """
@@ -141,17 +188,36 @@ struct RasterInputs{D,S,V,R,Cn,Cx,M} <: AbstractInputSource
     ssm::M
 end
 
+# Each raster must carry its stored values, not `missing` where its own nodata was.
+#
+# Rasters masks a file's declared nodata to `missing` by default, which is the wrong model for this
+# computation twice over. The reference reads *one* sentinel, from the DEM, and tests every raster
+# against that (`geogridOptical.cpp:337-339`) — so a value matching some other raster's declared
+# nodata is ordinary data. The ITS_LIVE rasters make that concrete: `xMinChipSize` and
+# `StableSurface` declare nodata 0 and `vxSearchRange` declares 32767, none of which the reference
+# treats as missing. And `missing` cannot be read into the `Float64` the kernel works in, so it
+# would fail on the first block regardless.
+function _check_unmasked(name::Symbol, r)
+    eltype(r) >: Missing || return nothing
+    throw(ArgumentError(
+        "RasterInputs `$name` has element type $(eltype(r)), so Rasters is masking its nodata to " *
+        "`missing`. Open it with `missingval = nothing` to get the stored values: which value " *
+        "counts as missing is decided by `NoDataPolicy` from the DEM's sentinel, matching the " *
+        "reference, and a raster's own declared nodata is not it."))
+end
+
 function RasterInputs(; dem, dhdx = nothing, dhdy = nothing, vx = nothing, vy = nothing,
                       srx = nothing, sry = nothing, csminx = nothing, csminy = nothing,
                       csmaxx = nothing, csmaxy = nothing, ssm = nothing)
     sz = size(dem)
-    for (name, r) in ((:dhdx, dhdx), (:dhdy, dhdy), (:vx, vx), (:vy, vy), (:srx, srx),
+    for (name, r) in ((:dem, dem), (:dhdx, dhdx), (:dhdy, dhdy), (:vx, vx), (:vy, vy), (:srx, srx),
                       (:sry, sry), (:csminx, csminx), (:csminy, csminy), (:csmaxx, csmaxx),
                       (:csmaxy, csmaxy), (:ssm, ssm))
         r === nothing && continue
         size(r) == sz || throw(DimensionMismatch(
             "RasterInputs `$name` is $(size(r)) but `dem` is $sz; every input must be on the " *
             "grid the geometry is computed on"))
+        _check_unmasked(name, r)
     end
     return RasterInputs(dem, dhdx, dhdy, vx, vy, srx, sry, csminx, csminy, csmaxx, csmaxy, ssm)
 end
@@ -159,6 +225,15 @@ end
 # `view` then `copyto!` is a chunk-aware windowed read for any DiskArrays-backed parent, so one
 # implementation serves every backend. `Float64` because the kernel works in it throughout and the
 # reference reads every input as `GDT_Float64` regardless of the file's own type.
+#
+# Raw values, with each raster's own nodata left in place as the number it is on disk. Rasters would
+# otherwise mask it to `missing`, which is both untypable as `Float64` and the wrong semantics: the
+# reference reads one sentinel from the DEM and tests every raster against *that*
+# (`geogridOptical.cpp:337-339`), so a value equal to some other raster's nodata is ordinary data.
+# The ITS_LIVE rasters make the difference concrete — `xMinChipSize` and `StableSurface` declare
+# nodata 0, and `vxSearchRange` declares 32767, none of which the reference treats as missing.
+# `NoDataPolicy` is where a missing value is decided, and it is given the DEM's sentinel by the
+# caller.
 function _read(r, block::CartesianIndices{2})
     dest = Array{Float64}(undef, size(block))
     # A Raster is (X, Y) here; `block` indexes the grid the same way.

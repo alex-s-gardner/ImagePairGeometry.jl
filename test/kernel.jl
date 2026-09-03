@@ -11,7 +11,8 @@ using ImagePairGeometry: PointGeometry, pointgeometry, pixel_index, inbounds, cr
                          per_year, close_slope_parallel, pixel_offset, offset_to_velocity,
                          scale_factors, search_pixels, chip_pixels, chip_size_pixels,
                          SearchRangeScaling, searchrange_scale, scaled_searchrange,
-                         inverse, isidentity, dot3, norm3, unitvec3
+                         inverse, isidentity, dot3, norm3, unitvec3,
+                         NoDataPolicy, nodata_from, ismissingval
 using StaticArrays: SVector
 using Test
 
@@ -366,4 +367,38 @@ end
     @test @allocated(pointgeometry(af, 1.0, 2.0, 3.0, c, n)) == 0
     @test @allocated(offset_to_velocity(g, c, YR)) == 0
     @test @allocated(cross_check(g)) == 0
+end
+
+@testset "what counts as missing" begin
+    nd = nodata_from(-32767.0)
+
+    # The sentinel, by exact equality, as the reference tests it.
+    @test ismissingval(nd, -32767.0)
+    @test ismissingval(nd, Float32(-32767))
+    @test ismissingval(nd, Int16(-32767))
+    @test !ismissingval(nd, -32766.999)
+    @test !ismissingval(nd, 0.0)
+
+    # And `NaN`, which equality cannot catch. The ITS_LIVE velocity rasters store `NaN` while
+    # declaring a nodata of -32767, so this is the case that arises on production data: without it
+    # `NaN` reaches `cround32`, where `Int32(NaN)` throws. The reference instead relies on
+    # `std::round(NaN)` converted to `GInt32` being undefined, which arm64 clang resolves to 0 —
+    # the same value its own missing-velocity branch writes.
+    @test ismissingval(nd, NaN)
+    @test ismissingval(nd, Float32(NaN))
+
+    # Infinities are not missing: they are a real computation going wrong, and should surface.
+    @test !ismissingval(nd, Inf)
+    @test !ismissingval(nd, -Inf)
+
+    # An absent sentinel reads as 0.0, so every genuine zero is missing — the reference reads the
+    # DEM's nodata without checking whether one is set.
+    z = nodata_from(nothing)
+    @test z.input === 0.0
+    @test ismissingval(z, 0.0)
+    @test ismissingval(z, -0.0)
+    @test ismissingval(z, NaN)
+
+    @test @inferred(ismissingval(nd, 1.0)) isa Bool
+    @test @allocated(ismissingval(nd, NaN)) == 0
 end

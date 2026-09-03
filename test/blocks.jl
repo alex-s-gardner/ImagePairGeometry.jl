@@ -11,27 +11,11 @@
 using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, nodata_from, block_ranges, DEFAULT_BLOCKSIZE,
                          _resolve_transform
-using JSON3
 using Proj
 using Test
 
 const ProjExt = Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)
 using .ProjExt: ProjTransformFactory
-
-const BFIX = JSON3.read(read(joinpath(@__DIR__, "reference", "geogrid.json"), String))
-const BARR = load_npz(joinpath(@__DIR__, "reference", "geogrid_arrays.npz"))
-
-"""Grid, pair, transform, window and inputs for a fixture case."""
-function setup_case(name)
-    c = only(filter(x -> x.name == name, collect(BFIX.cases)))
-    s = fixture_scene(c)
-    win = grid_window(s.grid, footprint_bounds(s.transform(), s.coord))
-    # `makepair` is a thunk, called once per task: a PROJ transformation wraps a `PJ*` on a context
-    # that PROJ documents as usable from one thread at a time, and building two concurrently on the
-    # shared global context corrupts its SQLite handle.
-    return (; s.grid, s.pair, s.coord, win, s.params,
-            inputs = fixture_inputs(BARR, c, win), makepair = s.transform)
-end
 
 """Assert two results agree on every band, floats compared bitwise."""
 function assert_identical(a::PairGeometry, b::PairGeometry)

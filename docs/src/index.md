@@ -136,6 +136,35 @@ threads.
 Where the grid and the imagery share a CRS, pass [`IdentityTransform`](@ref) instead — it is exact
 by construction and skips PROJ altogether, which is around 50 times faster per point.
 
+## Approximating the projection
+
+Where the CRSs differ, PROJ is most of the run: three calls per grid point, at roughly 300 ns each.
+[`InterpolatedTransform`](@ref) tabulates the transform on a coarse lattice and interpolates between
+the nodes, with a selectable kernel — [`Bilinear`](@ref), [`Bicubic`](@ref) or [`NearestNode`](@ref).
+
+```julia
+tf = InterpolatedTransform(ProjTransformFactory(3413, 32624), grid, pair;
+                           lattice = 4, mode = :hybrid, interpolation = Bilinear(),
+                           window = window)
+result = pairgeometry_blocked(grid, pair, source; transform = tf, window = window, ntasks = 8)
+```
+
+`lattice` is the node spacing as a multiple of the grid spacing. The two modes differ in which bands
+they leave exact:
+
+- `:hybrid` interpolates only the two inverse calls. The pixel-location bands come from the forward
+  transform alone, so they stay bitwise identical to the exact path. Saturates around 1.6×, since
+  the one remaining call is the floor.
+- `:full` interpolates both directions, for up to 6.9×. The location bands can then differ by one pixel
+  — the positional error is far below a pixel, but it can move a point across a rounding boundary.
+
+It is an [`AbstractTransformFactory`](@ref), so a blocked run calls it once per task and each task owns
+its own lattice. The result does not depend on the block size: the lattice is built from the whole
+window's bounds.
+
+The exact path is the default. `docs/interpolated-transform.md` records the measured cost and accuracy
+of each mode, spacing and band.
+
 ## API
 
 Everything exported, plus the internals the reference-fidelity notes refer to. Grouped by the file
