@@ -244,10 +244,14 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–004 complete.** `src/radar/` holds the four files, `test/radar_numerics.jl` holds 956
-assertions against `test/reference/radar_numerics.json`, generated from isce3 0.25.12. The full suite
-passes at 6810 assertions and the docs build clean. What measurement changed from the plan as written
+**Status: 001–005 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+`test/radar_coordinate.jl` hold 1034 assertions against two fixtures generated from isce3 0.25.12. The
+full suite passes at 6889 and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
+
+`RadarCoordinate` is constructible and supplies a footprint and the ground pixel sizes;
+`CoregisteredPair` is parameterized on the coordinate type. What 006 and 007 still need is the
+per-point kernel — there is no radar `pointgeometry`, so `pairgeometry` cannot take a radar pair yet.
 
 ### CHUNK-001: ellipsoid and TCN basis — done
 
@@ -340,7 +344,7 @@ epoch offset. Comparing `0.5 * nLines / prf` against `(floor(nLines / 2) - 1) / 
 quantities in different coordinate systems and means nothing. CHUNK-005 reproduces both initialization
 expressions verbatim; there is no discrepancy to carry.
 
-### CHUNK-005: RadarCoordinate, footprint, incidence angle
+### CHUNK-005: RadarCoordinate, footprint, incidence angle — done
 
 `src/radar/coordinate.jl`. Replaces the throwing `RadarCoordinate` in `src/coordinates.jl` with the
 real type: `starting_range`, `dr`, `sensing_start`, `prf`, `nlines`, `nsamples`, `look_side`,
@@ -356,9 +360,17 @@ change.
 
 Decides the `CoregisteredPair` question above.
 
-Verify: bounding box and incidence angle against `gen_geogrid_radar.py`'s scalars, bitwise for
-same-CRS and 1e-9 relative for reprojected, matching how the projected path bounds its footprint;
-and the grid window exactly in every case.
+Verified against `gen_radar_coordinate.py`, which runs `determineBbox` and `getIncidenceAngle` as the
+reference defines them: bounding box and incidence angle to 1e-12 relative, and the grid window the
+box produces bitwise at three grid spacings. The box cannot be bitwise while `rdr2geo`'s corners are
+not; the window is the quantity a shift would corrupt, and that is exact.
+
+One finding, from a test that failed and was right to: **`azm_res` uses the orbit-clock midpoint, not
+the `sensing_start`-clock one.** `geogridRadar.cpp:686` computes it from `satvmid`, interpolated at
+`tmidd` (`:435`) — the `tmids` timestamp, i.e. `orbit_midtime`. My first implementation used
+`midtime`, which differs by one pulse interval and changed `azm_res` in the last bits. This is the
+first place the two-clock distinction has an observable consequence, which is why it is worth having
+transcribed both expressions rather than reconciling them.
 
 ### CHUNK-006: generalize the shared kernel
 

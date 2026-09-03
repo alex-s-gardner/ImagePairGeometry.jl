@@ -105,12 +105,17 @@ end
     @test ProjectedCoordinate((0, 0), (1, -1), (5, 5)) isa ProjectedCoordinate{Int}
 end
 
-@testset "RadarCoordinate is declared but not implemented" begin
+@testset "both coordinate systems subtype the interface" begin
+    @test ProjectedCoordinate <: ImagePairGeometry.AbstractImageCoordinate
     @test RadarCoordinate <: ImagePairGeometry.AbstractImageCoordinate
-    @test_throws "not implemented yet" RadarCoordinate()
+    # Every field is required; there is no meaningful default for a radar acquisition.
+    @test_throws UndefKeywordError RadarCoordinate()
 end
 
 @testset "type stable" begin
     a = ImageFootprint(origin = (0.0, 100.0), spacing = (10.0, -10.0), size = (10, 10))
-    @test @inferred(coregister(a, a; dt = 1.0)) isa CoregisteredPair{Float64}
+    # `CoregisteredPair` is parameterized on the coordinate type rather than an element type, so a
+    # coregistered projected pair is a `CoregisteredPair{ProjectedCoordinate{Float64}}`.
+    @test @inferred(coregister(a, a; dt = 1.0)) isa
+        CoregisteredPair{ProjectedCoordinate{Float64}}
 end

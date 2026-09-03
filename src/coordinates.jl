@@ -24,10 +24,13 @@ index in it.
 
 Subtypes: [`ProjectedCoordinate`](@ref), [`RadarCoordinate`](@ref).
 
-Nothing dispatches on this yet: every kernel signature names `ProjectedCoordinate`, because that is
-the only implemented path. It is a place to hang the radar path from, not a generalization the
-current code relies on — and whether it is the right parent is a question the radar geometry gets to
-answer, since a radar acquisition is not described by an origin, a spacing and a size.
+The interface a subtype provides: [`nsamples`](@ref) and [`nlines`](@ref) for the image size,
+[`xsize`](@ref) and [`ysize`](@ref) for the ground pixel size along each axis, and a
+[`footprint_bounds`](@ref) method. That is what [`CoregisteredPair`](@ref) and the chip-size
+conversion consume, and it is deliberately small: the two coordinate systems have almost nothing in
+common structurally — one is an origin, a spacing and a size, the other a range axis, a time axis and
+an orbit — so what they share is the handful of quantities the kernel actually asks for rather than a
+common representation.
 """
 abstract type AbstractImageCoordinate end
 
@@ -78,39 +81,44 @@ end
 ProjectedCoordinate(; origin, spacing, size) = ProjectedCoordinate(origin, spacing, size)
 
 """
-    RadarCoordinate
+    xsize(c::AbstractImageCoordinate) -> Float64
+    ysize(c::AbstractImageCoordinate) -> Float64
 
-An image in radar slant-range/azimuth coordinates.
+Ground pixel size along each image axis, in meters — geogrid's `X_res`/`Y_res`, reported in its
+scalar output and used downstream to convert a chip size in meters to pixels.
 
-Not yet implemented: constructing one throws. The type exists so that the dispatch on
-[`AbstractImageCoordinate`](@ref) is fixed while only the projected path is available, and so
-that a caller reaching for radar gets a clear error rather than a `MethodError` on a type that
-does not exist.
+Part of the [`AbstractImageCoordinate`](@ref) interface. A projected image reads them off its
+spacing; a radar image derives them from the incidence angle and the platform speed, since it has no
+geotransform to read. Both are absolute, so the axis direction is not carried here.
 """
-struct RadarCoordinate <: AbstractImageCoordinate
-    function RadarCoordinate(args...; kw...)
-        throw(ArgumentError(
-            "RadarCoordinate is not implemented yet: only ProjectedCoordinate is available. " *
-            "The radar path needs orbit interpolation and a range-Doppler solve; see the " *
-            "roadmap in README.md."))
-    end
-end
+function xsize end, function ysize end
 
 """
     xsize(c::ProjectedCoordinate)
     ysize(c::ProjectedCoordinate)
 
-Absolute pixel size along each axis — geogrid's `X_res`/`Y_res`, reported in its scalar output
-and used downstream to convert a chip size in meters to pixels.
+The absolute value of the signed pixel spacing along each axis.
 """
 xsize(c::ProjectedCoordinate) = abs(c.spacing[1])
 ysize(c::ProjectedCoordinate) = abs(c.spacing[2])
 
 """
+    nsamples(c::AbstractImageCoordinate) -> Int
+    nlines(c::AbstractImageCoordinate) -> Int
+
+Image width and height in pixels — columns and rows for a projected image, range samples and azimuth
+lines for a radar one.
+
+Part of the [`AbstractImageCoordinate`](@ref) interface, and what the bounds test on a computed pixel
+index compares against.
+"""
+function nsamples end, function nlines end
+
+"""
     nsamples(c::ProjectedCoordinate)
     nlines(c::ProjectedCoordinate)
 
-Image width and height in pixels.
+The two components of the coordinate's `size`.
 """
 nsamples(c::ProjectedCoordinate) = c.size[1]
 nlines(c::ProjectedCoordinate) = c.size[2]

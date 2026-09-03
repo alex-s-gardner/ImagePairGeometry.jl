@@ -31,6 +31,10 @@ using Extents: Extent
 
 export ImageFootprint, CoregisteredPair, coregister
 export ProjectedCoordinate, RadarCoordinate
+# The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
+# `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
+# because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
+export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
 export MapGrid, footprint_bounds, grid_window
 export IdentityTransform, AffineTransform, TransformPair, transform_pair
 export NoDataPolicy, nodata_from
@@ -45,8 +49,9 @@ export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
-# The radar numerics: self-contained, and used by nothing else yet. `ellipsoid.jl` needs the
-# three-vector primitives above; the rest build on it in order.
+# The radar numerics. `ellipsoid.jl` needs the three-vector primitives above; the rest build on it in
+# order. `radar/coordinate.jl` comes after `grid.jl` instead, since it adds a `footprint_bounds`
+# method and needs `MapGrid`'s `DEFAULT_ZRANGE`.
 include("radar/ellipsoid.jl")
 include("radar/orbit.jl")
 include("radar/geo2rdr.jl")
@@ -55,6 +60,7 @@ include("coordinates.jl")
 include("transforms.jl")
 include("pair.jl")
 include("grid.jl")
+include("radar/coordinate.jl")
 include("kernel/searchrange.jl")
 include("kernel/geometry.jl")
 include("kernel/outputs.jl")

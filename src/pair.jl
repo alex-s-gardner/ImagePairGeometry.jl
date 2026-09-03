@@ -38,25 +38,46 @@ ImageFootprint(; origin, spacing, size) = ImageFootprint(origin, spacing, size)
 """
     CoregisteredPair
 
-The overlap of two co-registered images, and the offsets into each.
+A pair of acquisitions, the image coordinate system their geometry is computed against, and their
+time separation.
 
 # Fields
-- `coordinate`: the overlap as a [`ProjectedCoordinate`](@ref). Pixel indices the geometry
-  produces are relative to this, not to either input image.
+- `coordinate`: the image coordinate system pixel indices are relative to — any
+  [`AbstractImageCoordinate`](@ref). For a projected pair whose overlap was computed this is that
+  overlap, not either input image; for a radar pair it is the reference acquisition outright, since
+  `testGeogrid.py:427-470` takes every radar parameter from image 1.
 - `reference_offset`, `secondary_offset`: the `(column, row)` index of the overlap's first pixel
   within each input image, zero-based as the reference reports them. A caller reads its image
-  windows at these offsets.
+  windows at these offsets. Both zero when `coordinate` is already the window — see the
+  one-argument constructor.
 - `dt`: time separation in seconds, secondary minus reference. Enters the geometry as the
   factor converting velocity to displacement.
 
-Built by [`coregister`](@ref).
+Built by [`coregister`](@ref) when the overlap has to be computed, or directly from a coordinate
+when it does not.
 """
-struct CoregisteredPair{T<:Real}
-    coordinate::ProjectedCoordinate{T}
+struct CoregisteredPair{C<:AbstractImageCoordinate}
+    coordinate::C
     reference_offset::NTuple{2,Int}
     secondary_offset::NTuple{2,Int}
     dt::Float64
 end
+
+"""
+    CoregisteredPair(coordinate; dt)
+
+A pair whose image coordinate system is already known, with both offsets zero.
+
+For a [`RadarCoordinate`](@ref), and for a [`ProjectedCoordinate`](@ref) the caller built directly
+from a view of an overlap it has already sliced. In both cases the coordinate *is* the window, so
+there is no offset into a larger image to record — which is what the zeros mean, rather than "the
+overlap happens to start at the origin".
+
+[`coregister`](@ref) is the other way to obtain a pair, for the case that needs it: two footprints
+whose intersection has to be computed, which is also where nonzero offsets come from.
+"""
+CoregisteredPair(coordinate::AbstractImageCoordinate; dt::Real) =
+    CoregisteredPair(coordinate, (0, 0), (0, 0), Float64(dt))
 
 """
     coregister(reference::ImageFootprint, secondary::ImageFootprint; dt) -> CoregisteredPair
