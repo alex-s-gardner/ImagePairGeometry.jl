@@ -244,7 +244,7 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–008 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+**Status: 001–009 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
 `test/radar_coordinate.jl` hold 1035 assertions against two fixtures generated from isce3 0.25.12. The
 full suite passes at 47093 radar assertions (9788 total before the eight-case fixture landed) and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
@@ -467,7 +467,7 @@ place a one-ULP `acos` difference could flip an output — holds on **all 29012 
 case. Combined with the 40.2° margin measured in CHUNK-007, the gate is unreachable at real incidence
 angles on both paths.
 
-### CHUNK-009: blocked and threaded
+### CHUNK-009: blocked and threaded — done
 
 `pairgeometry_blocked` for radar. Points remain independent, so this is threading only — but
 `geo2rdr` is far more expensive per point than three PROJ calls, which changes what is worth
@@ -475,7 +475,29 @@ caching. Whether `InterpolatedTransform` extends to the radar mapping is an open
 commitment: the mapping is smooth in the grid coordinates, so lattice interpolation should apply,
 but the accuracy budget is different because the result feeds an iteration.
 
-Measure first, in `benchmark/`, before adding anything.
+Measured first, and the answer was that nothing needed adding: `_run_block!` already took any
+`AbstractImageCoordinate` from CHUNK-006, so radar blocking worked the moment the driver dispatched.
+Verified bitwise at four block-size and task-count combinations, including sizes that do not divide the
+window.
+
+**The lattice is not worth it, by a wide margin.** `benchmark/radar_scale_perf.jl` measures where a
+radar point's 5.9 µs goes:
+
+| stage | ns | share |
+|---|---|---|
+| `geo2rdr` | 3078 | 58.6% |
+| range–Doppler solve | 1567 | 29.8% |
+| one PROJ call | 109 | 2.1% |
+
+Three PROJ calls are **6.3%** of a radar point against roughly 95% of a projected one. So
+`InterpolatedTransform` — which buys up to 6.9× there by removing PROJ — has almost nothing to take
+here. Interpolating the *solve* would mean interpolating the answer, which is a different and much
+riskier proposition than interpolating a coordinate transform.
+
+Threading is the lever instead: 2.91× on four threads, near-linear. And the absolute numbers make the
+question moot at production scale — an ITS_LIVE-sized tile (915×915 at 120 m) is **6 seconds** serial,
+a 5000×5000 grid **2.4 minutes**. The projected path needed the lattice because PROJ dominated it; the
+radar path does not because its own arithmetic does.
 
 ### CHUNK-010: extensions and documentation
 
@@ -505,9 +527,13 @@ cases, and the "Not yet implemented" section removed. `docs/src/index.md` and `R
   outside. Until then the consequence is bounded: one index on under 2% of points, and 1.07e-4
   relative on the two off2vel bands that divide by the along-track step.
 
-- Is a lattice-interpolated radar mapping worth its accuracy cost? CHUNK-009, after measurement.
+
 
 Resolved since the plan was written:
+
+- **A lattice-interpolated radar mapping is not worth it.** PROJ is 6.3% of a radar point against ~95%
+  of a projected one, so the trick that wins on the projected path has almost nothing to remove here.
+  Measured in `benchmark/radar_scale_perf.jl`; threading gives 2.91× on four threads instead.
 
 - **Tier A mostly survives, and the range index survives outright.** Range indices, chip sizes and the
   stable-surface mask are bitwise on every case. The azimuth index and the search extent derived from

@@ -20,7 +20,8 @@ using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, RADAR_REFERENCE_FILES, referenc
                          Ellipsoid, Orbit, RadarCoordinate, LookLeft, LookRight,
                          incidence_angle, nodata_from, xsize, ysize, TransformPair,
                          footprint_bounds, grid_window, MapGrid, CoregisteredPair,
-                         GeometryInputs, pairgeometry, nvalid
+                         GeometryInputs, pairgeometry, pairgeometry_blocked,
+                         InMemoryInputs, nvalid
 using JSON3
 using Proj
 using StaticArrays: SVector
@@ -295,6 +296,28 @@ end
     # except where the swath edge itself is ambiguous.
     @test disagree <= total ÷ 200
     @info "operator-gate agreement (cross_check > 1°)" disagreeing = disagree of = total
+end
+
+@testset "blocking and threading change nothing" begin
+    # Points are independent on this path as on the projected one, so a blocked or threaded run must
+    # be bitwise identical to a serial whole-window one. Block sizes that do not divide the window are
+    # included deliberately: an off-by-one in the block-to-window offset would show up there first.
+    c = only(filter(x -> x.name == "utm32n", collect(GFIX.cases)))
+    ref, win, coord, grid, _ = run_radar_case(c)
+    pair = CoregisteredPair(coord; dt = Float64(c.dt))
+    src = InMemoryInputs(fixture_inputs(GARR, c, win), win)
+    factory() = TransformPair(
+        Proj.Transformation("EPSG:$(c.grid.epsg)", "EPSG:4326"; always_xy = true),
+        Proj.Transformation("EPSG:4326", "EPSG:$(c.grid.epsg)"; always_xy = true))
+
+    for (bs, nt) in ((size(win), 1), ((16, 16), 1), ((16, 16), 2), ((7, 13), 2))
+        nt > Threads.nthreads() && continue
+        r = pairgeometry_blocked(grid, pair, src; transform = factory, window = win,
+                                 blocksize = bs, ntasks = nt, nodata = nodata_from(0.0))
+        for f in (INT_BANDS..., FLOAT_BANDS...)
+            @test getfield(r, f) == getfield(ref, f)
+        end
+    end
 end
 
 @testset "an unsupported band writes nothing" begin
