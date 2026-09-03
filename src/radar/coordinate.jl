@@ -197,38 +197,43 @@ evaluated anyway because the reference evaluates it.
 function footprint_bounds(transform, c::RadarCoordinate; zrange = DEFAULT_ZRANGE)
     el = Ellipsoid()
 
-    xmin = ymin = Inf
-    xmax = ymax = -Inf
-
     # `np.linspace(0, nsamples - 1, num=21)` — endpoints included, so the last is the far edge.
     ranges = ntuple(FOOTPRINT_RANGE_SAMPLES) do i
         frac = (i - 1) / (FOOTPRINT_RANGE_SAMPLES - 1)
         return c.starting_range + frac * (c.nsamples - 1) * c.dr
     end
 
-    @inline function sample!(t, rng)
-        for z in zrange
-            llh = rdr2geo(c.orbit, el, t + c.orbit_epoch_offset, rng;
-                          height = z, wavelength = c.wavelength, side = c.look_side)
+    # The azimuth times, in the reference's order: the first and last range lines
+    # (`GeogridRadar.py:169-215`), then the 19 intermediate fractions its `linspace(0, 1, 21)[1:-1]`
+    # leaves (`:219`). Built as a tuple so the sampling loop below is one flat pass.
+    aztimes = (c.sensing_start, sensing_stop(c),
+               ntuple(FOOTPRINT_AZIMUTH_SAMPLES - 2) do i
+                   frac = i / (FOOTPRINT_AZIMUTH_SAMPLES - 1)
+                   return c.sensing_start + frac * (c.nlines - 1) / c.prf
+               end...)
+
+    # Unpacked once, and the sampling written as one loop rather than through a helper. Neither is
+    # cosmetic: `Orbit` and `RadarCoordinate` both hold `Vector`s, so neither is `isbits`, and passing
+    # either into a function the compiler declines to inline copies it to the heap once per call. With
+    # the helper this cost 21 kB and 160 µs; inline it is 0.7 kB and 74 µs.
+    orbit = c.orbit
+    wvl = c.wavelength
+    side = c.look_side
+    epoch = c.orbit_epoch_offset
+
+    xmin = ymin = Inf
+    xmax = ymax = -Inf
+
+    for (ai, t) in pairs(aztimes)
+        # The first two times are full range lines; the rest are sampled at the two range edges only,
+        # since the intermediate lines contribute nothing between them.
+        rs = ai <= 2 ? ranges : (ranges[1], ranges[end])
+        for rng in rs, z in zrange
+            llh = rdr2geo(orbit, el, t + epoch, rng; height = z, wavelength = wvl, side)
             gx, gy, _ = transform(rad2deg(llh[1]), rad2deg(llh[2]), llh[3])
             xmin = min(xmin, gx); xmax = max(xmax, gx)
             ymin = min(ymin, gy); ymax = max(ymax, gy)
         end
-    end
-
-    # The first and last range lines, at every range position.
-    for rng in ranges
-        sample!(c.sensing_start, rng)
-        sample!(sensing_stop(c), rng)
-    end
-
-    # The intermediate lines, at the two range edges only. `linspace(0, 1, 21)[1:-1]` drops the
-    # endpoints, which the two loops above already covered.
-    for i in 2:(FOOTPRINT_AZIMUTH_SAMPLES - 1)
-        frac = (i - 1) / (FOOTPRINT_AZIMUTH_SAMPLES - 1)
-        t = c.sensing_start + frac * (c.nlines - 1) / c.prf
-        sample!(t, ranges[1])
-        sample!(t, ranges[end])
     end
 
     isfinite(xmin) && isfinite(ymin) || throw(ArgumentError(
