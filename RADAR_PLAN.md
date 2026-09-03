@@ -483,13 +483,23 @@ cases, and the "Not yet implemented" section removed. `docs/src/index.md` and `R
 
 ## Open questions
 
-- Does Tier A survive on the radar path? The margin is now known — 1.9e-9 m of ground position
-  against a 2.33 m range sample — so the question is whether any fixture point sits within 1e-9 of a
-  `std::round` boundary. CHUNK-008 measures.
+- **What is the compiled kernel's 0.0013-line azimuth offset?** Nine hypotheses eliminated with every
+  input verified bit-identical — see `REFERENCE.md`. It is the gap between the compiled kernel and any
+  external reproduction, not a transcription error: two independent reproductions agree with each other
+  to 4e-6 lines while both sit ~0.0013 from the kernel. Closing it would mean reproducing that
+  kernel's floating-point history through a 51-iteration loop, which may not be achievable from
+  outside. Until then the consequence is bounded: one index on under 2% of points, and 1.07e-4
+  relative on the two off2vel bands that divide by the along-track step.
 
 - Is a lattice-interpolated radar mapping worth its accuracy cost? CHUNK-009, after measurement.
 
 Resolved since the plan was written:
+
+- **Tier A mostly survives, and the range index survives outright.** Range indices, chip sizes and the
+  stable-surface mask are bitwise on every case. The azimuth index and the search extent derived from
+  it are not, for the reason above — but the prediction that the 1.9e-9 m ellipsoid margin would be the
+  deciding factor was wrong by five orders of magnitude. The deciding factor is 2 cm, and it is not in
+  this port.
 
 - **`cross_check` does not approach its gate.** Measured at 40.2° minimum across the swath, against a
   `> 1.0` threshold — so the one-ULP `acos` difference between openlibm and the platform libm cannot
