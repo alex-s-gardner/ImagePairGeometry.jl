@@ -20,7 +20,8 @@ module ImagePairGeometryRastersExt
 
 using ImagePairGeometry
 using ImagePairGeometry: PairGeometry, AbstractInputSource, GeometryInputs, REFERENCE_FILES,
-                         INT_BANDS, FLOAT_BANDS, nodata_from, NoDataPolicy
+                         RADAR_REFERENCE_FILES, reference_files, INT_BANDS, FLOAT_BANDS,
+                         nodata_from, NoDataPolicy
 using Rasters
 using Rasters: AbstractRaster
 using DimensionalData
@@ -283,6 +284,11 @@ Names, band order, data types and nodata values match the reference, so a consum
 output reads these unchanged. `Int32` bands are written as `Int32` and `Float64` as `Float64`, as the
 reference writes `GDT_Int32` and `GDT_Float64`.
 
+The two off2vel files get two bands for a projected result and three for a radar one, matching
+`geogridOptical.cpp:461` and `geogridRadar.cpp:634,652`. The count comes from the result itself, via
+`reference_files` — a reader indexes bands positionally, so an extra band would shift every band after
+it without any error.
+
 A file whose bands are entirely nodata is skipped, matching the reference: it writes no file at all
 for an output its inputs did not support, and a consumer distinguishes "unsupported" from "computed
 and empty" by the file's absence.
@@ -293,7 +299,9 @@ function ImagePairGeometry.write_geotiffs(dir::AbstractString, g::PairGeometry)
     nx, ny = size(g)
     written = String[]
 
-    for (filename, fields) in REFERENCE_FILES
+    # Two-band off2vel files on the projected path, three on the radar path. `reference_files`
+    # reads that off the result rather than taking a flag, so a caller cannot write the wrong count.
+    for (filename, fields) in reference_files(g)
         bands = map(f -> getfield(g, f), fields)
         T = eltype(first(bands))
         sentinel = T(g.nodata.output)

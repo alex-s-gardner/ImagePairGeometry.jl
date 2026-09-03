@@ -7,7 +7,8 @@
 using ImagePairGeometry
 using ImagePairGeometry: pointgeometry, surface_normal, close_slope_parallel, pixel_offset,
                          offset_to_velocity, scale_factors, cross_check, transform_pair,
-                         IdentityTransform, AffineTransform, TransformPair, pixel_index, inbounds
+                         IdentityTransform, AffineTransform, TransformPair, pixel_index, inbounds,
+                         spacing
 using BenchmarkTools
 using Proj
 
@@ -23,8 +24,8 @@ function fullpoint(tf, gx, gy, gz, c, n, dt)
     inbounds(xi, yi, c) || return (0.0,)
     v = close_slope_parallel(300.0, -120.0, n)
     dx, dy = pixel_offset(v, g, dt)
-    o = offset_to_velocity(g, c, dt)
-    sf = scale_factors(g, c)
+    o = offset_to_velocity(g, spacing(c), dt)
+    sf = scale_factors(g, spacing(c))
     return (xi, yi, dx, dy, o..., sf..., cross_check(g))
 end
 

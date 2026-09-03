@@ -28,6 +28,9 @@ All arrays share the axes of the grid window the result was computed over.
 - `off2vx_dx`, `off2vx_dy`, `off2vy_dx`, `off2vy_dy`: the operator converting a pixel displacement
   to a map velocity. Displacement `(dx, dy)` gives `vx = off2vx_dx * dx + off2vx_dy * dy` and
   likewise for `vy`, after scaling the displacement by the scale factors.
+- `off2vx_dr`, `off2vy_dr`: velocity per pixel of displacement along the image's *own* axes, the
+  radar path's third off2vel band (`geogridRadar.cpp:1185-1187`). Left at their sentinel on the
+  projected path, which writes two-band off2vel files.
 - `scale_x`, `scale_y`: ratio of true ground distance to nominal pixel spacing.
 
 # Metadata
@@ -58,6 +61,8 @@ struct PairGeometry{I<:AbstractMatrix{Int32},F<:AbstractMatrix{Float64},C}
     off2vx_dy::F
     off2vy_dx::F
     off2vy_dy::F
+    off2vx_dr::F
+    off2vy_dr::F
     scale_x::F
     scale_y::F
 
@@ -80,16 +85,23 @@ const INT_BANDS = (:location_x, :location_y, :offset_x, :offset_y, :search_x, :s
 
 Names of the `Float64` fields of [`PairGeometry`](@ref), in the reference's band order.
 """
-const FLOAT_BANDS = (:off2vx_dx, :off2vx_dy, :off2vy_dx, :off2vy_dy, :scale_x, :scale_y)
+const FLOAT_BANDS = (:off2vx_dx, :off2vx_dy, :off2vy_dx, :off2vy_dy, :off2vx_dr, :off2vy_dr,
+                     :scale_x, :scale_y)
 
 """
     REFERENCE_FILES
 
 Each of the reference's nine output files, with the [`PairGeometry`](@ref) fields holding its
-bands in order.
+bands in order — the **projected** path's band layout.
 
 The basis for writing GeoTIFFs that a downstream reader consuming the reference's output can read
 unchanged, and for comparing band by band against it.
+
+The two off2vel files have two bands here and three on the radar path
+(`geogridOptical.cpp:461` versus `geogridRadar.cpp:634,652`). That difference is not cosmetic: a
+reader written against the projected output indexes bands positionally, so writing three where the
+reference writes two would break it. Use [`reference_files`](@ref) to get the layout for a given
+coordinate system rather than assuming this one.
 """
 const REFERENCE_FILES = (
     "window_location.tif" => (:location_x, :location_y),
@@ -102,6 +114,56 @@ const REFERENCE_FILES = (
     "window_rdr_off2vel_y_vec.tif" => (:off2vy_dx, :off2vy_dy),
     "window_scale_factor.tif" => (:scale_x, :scale_y),
 )
+
+"""
+    RADAR_REFERENCE_FILES
+
+[`REFERENCE_FILES`](@ref) with the radar path's three-band off2vel layout.
+
+Band 3 of each is the velocity per pixel of displacement along that image axis
+(`geogridRadar.cpp:1185-1187`), which the projected path has no equivalent of.
+"""
+const RADAR_REFERENCE_FILES = (
+    "window_location.tif" => (:location_x, :location_y),
+    "window_offset.tif" => (:offset_x, :offset_y),
+    "window_search_range.tif" => (:search_x, :search_y),
+    "window_chip_size_min.tif" => (:chip_min_x, :chip_min_y),
+    "window_chip_size_max.tif" => (:chip_max_x, :chip_max_y),
+    "window_stable_surface_mask.tif" => (:stable_surface,),
+    "window_rdr_off2vel_x_vec.tif" => (:off2vx_dx, :off2vx_dy, :off2vx_dr),
+    "window_rdr_off2vel_y_vec.tif" => (:off2vy_dx, :off2vy_dy, :off2vy_dr),
+    "window_scale_factor.tif" => (:scale_x, :scale_y),
+)
+
+"""
+    reference_files(c::AbstractImageCoordinate) -> Tuple
+
+The output file and band layout for a coordinate system: [`REFERENCE_FILES`](@ref) for a projected
+image, [`RADAR_REFERENCE_FILES`](@ref) for a radar one.
+
+Dispatching rather than branching on a flag, so a caller cannot write the wrong band count for the
+path it is on.
+"""
+reference_files(::ProjectedCoordinate) = REFERENCE_FILES
+reference_files(::RadarCoordinate) = RADAR_REFERENCE_FILES
+
+"""
+    reference_files(g::PairGeometry) -> Tuple
+
+The layout for a result, chosen by whether its radar-only bands were written.
+
+A `PairGeometry` does not carry the coordinate system that produced it — it is a set of arrays plus
+georeferencing — so the discriminator is `off2vx_dr`: all-sentinel means the projected path, since
+only the radar kernel fills it.
+
+This is how [`write_geotiffs`](@ref) picks a band count without being told which path it is on. The
+consequence of getting it wrong is silent: a reader built against the reference's projected output
+indexes bands positionally, so an extra band shifts everything after it.
+"""
+function reference_files(g::PairGeometry)
+    sentinel = g.nodata.output
+    return all(==(sentinel), g.off2vx_dr) ? REFERENCE_FILES : RADAR_REFERENCE_FILES
+end
 
 Base.size(r::PairGeometry) = size(r.location_x)
 Base.axes(r::PairGeometry) = axes(r.location_x)

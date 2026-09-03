@@ -164,6 +164,33 @@ end
         @test length(written) == 9      # every band is supported by these inputs
         @test Set(basename.(written)) == Set(first.(REFERENCE_FILES))
 
+        # The projected path writes *two*-band off2vel files. `PairGeometry` carries the radar path's
+        # third band as a field, so the layout has to be chosen rather than taken from the struct —
+        # and getting it wrong is silent, since a consumer indexes bands positionally.
+        @test ImagePairGeometry.reference_files(r) === REFERENCE_FILES
+        for f in ("window_rdr_off2vel_x_vec.tif", "window_rdr_off2vel_y_vec.tif")
+            ArchGDAL.read(joinpath(out, f)) do ds
+                @test ArchGDAL.nraster(ds) == 2
+            end
+        end
+
+        # A result with the radar band filled selects the three-band layout, so the same writer
+        # produces the reference's radar output without being told which path it is on.
+        radar = ImagePairGeometry.PairGeometry(
+            (getfield(r, f) for f in propertynames(r)[1:11])...,
+            r.off2vx_dx, r.off2vx_dy, r.off2vy_dx, r.off2vy_dy,
+            fill(1.0, size(r)), fill(2.0, size(r)),      # off2vx_dr, off2vy_dr
+            r.scale_x, r.scale_y,
+            r.geotransform, r.crs, r.window, r.nodata)
+        @test ImagePairGeometry.reference_files(radar) === ImagePairGeometry.RADAR_REFERENCE_FILES
+        rout = mktempdir()
+        write_geotiffs(rout, radar)
+        for f in ("window_rdr_off2vel_x_vec.tif", "window_rdr_off2vel_y_vec.tif")
+            ArchGDAL.read(joinpath(rout, f)) do ds
+                @test ArchGDAL.nraster(ds) == 3
+            end
+        end
+
         for (filename, bandfields) in REFERENCE_FILES
             path = joinpath(out, filename)
             @test isfile(path)
