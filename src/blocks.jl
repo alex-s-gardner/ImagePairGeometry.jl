@@ -165,7 +165,10 @@ end
 
 # Split out so the block loop specializes on the concrete source and transform types, and so each
 # task's writes land in a function whose locals cannot be captured across tasks.
-function _run_block!(result::PairGeometry, grid::MapGrid, coord::ProjectedCoordinate, dt::Float64,
+#
+# Coordinate-agnostic: it only forwards to `_fill_geometry!`, which dispatches. Blocking a radar run
+# is the same operation for the same reason — every point is independent of every other.
+function _run_block!(result::PairGeometry, grid::MapGrid, coord::AbstractImageCoordinate, dt::Float64,
                      source::AbstractInputSource, tf::TransformPair, params::GeometryParams,
                      nodata::NoDataPolicy, block::CartesianIndices{2}, win::CartesianIndices{2})
     inputs = readblock(source, block)
