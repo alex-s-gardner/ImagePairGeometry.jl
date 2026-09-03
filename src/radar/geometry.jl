@@ -93,7 +93,7 @@ function pointgeometry(tf::TransformPair, gx::Real, gy::Real, gz::Real,
     satx, satv = interpolate(c.orbit, p.orbittime + 1 / c.prf)
     targ_xyz, targ_llh = _range_doppler(el, c, satx, satv, p.range, Float64(gz))
 
-    ydiff = _to_grid(tf, el, targ_xyz, targ_llh) - grid
+    ydiff = _to_grid(tf, targ_llh) - grid
     ylen = norm3(ydiff)
 
     # The along-track step in ECEF, which the operator and the azimuth scale factor divide by. Not
@@ -107,19 +107,18 @@ function pointgeometry(tf::TransformPair, gx::Real, gy::Real, gz::Real,
     return (g, RadarSpacing((c.dr, da), (c.dr, ylen)), p)
 end
 
-# An ECEF position as a grid coordinate, through geodetic degrees.
-@inline function _to_grid(tf::TransformPair, el::Ellipsoid, xyz::SVector{3,Float64})
-    llh = xyz_to_lonlat(el, xyz)
-    return _to_grid(tf, el, xyz, llh)
-end
-
-# The same, when the caller already has the geodetic position — the range-Doppler solve produces it,
-# and re-deriving it from ECEF would not round-trip to the same last bits.
-@inline function _to_grid(tf::TransformPair, ::Ellipsoid, ::SVector{3,Float64},
-                         llh::SVector{3,Float64})
+# A geodetic position as a grid coordinate. Takes radians and converts, since every caller here holds
+# radians and the transform wants degrees.
+@inline function _to_grid(tf::TransformPair, llh::SVector{3,Float64})
     gx, gy, gz = tf.inverse(llh[1] / DEG2RAD, llh[2] / DEG2RAD, llh[3])
     return SVector{3,Float64}(gx, gy, gz)
 end
+
+# An ECEF position as a grid coordinate. Separate from the above because the range-Doppler solve
+# already produces a geodetic position, and re-deriving it from ECEF would not round-trip to the same
+# last bits — so that caller passes its `llh` straight to the method above.
+@inline _to_grid(tf::TransformPair, el::Ellipsoid, xyz::SVector{3,Float64}) =
+    _to_grid(tf, xyz_to_lonlat(el, xyz))
 
 # The range-Doppler solve: where on the range sphere, at this satellite position, the ground sits at
 # the given height.
@@ -144,8 +143,13 @@ function _range_doppler(el::Ellipsoid, c::RadarCoordinate, satx::SVector{3,Float
     llhi = SVector{3,Float64}(0.0, 0.0, 0.0)
     targ_xyz = SVector{3,Float64}(0.0, 0.0, 0.0)
 
+    # `a` is the satellite's geocentric distance, invariant across the loop; `a / rngpix`,
+    # `rngpix / a` and the look sign are invariant with it. Hoisting them by hand is bit-identical and
+    # measured no faster — LLVM already lifts them out — so the expression stays in the reference's
+    # shape.
+    a = sat_dist
+
     for _ in 1:RANGE_DOPPLER_ITERATIONS
-        a = sat_dist
         b = radius + zsch
 
         costheta = 0.5 * (a / rngpix + rngpix / a - (b / a) * (b / rngpix))

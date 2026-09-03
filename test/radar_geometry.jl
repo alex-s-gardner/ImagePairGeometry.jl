@@ -17,10 +17,10 @@
 
 using ImagePairGeometry
 using ImagePairGeometry: Ellipsoid, Orbit, RadarCoordinate, LookLeft, LookRight,
-                         incidence_angle, interpolate, rdr2geo, geo2rdr,
+                         incidence_angle, interpolate, rdr2geo,
                          pointgeometry, PointGeometry, RadarSpacing, RANGE_DOPPLER_ITERATIONS,
                          GEO2RDR_ITERATIONS, _range_doppler,
-                         lonlat_to_xyz, xyz_to_lonlat, norm3, dot3, unitvec3,
+                         lonlat_to_xyz, norm3, dot3,
                          surface_normal, cross_check, offset_to_velocity, scale_factors,
                          axis_velocity, TransformPair, transform_pair, IdentityTransform,
                          midtime, orbit_midtime, range_index, azimuth_index, ysize
