@@ -142,7 +142,7 @@ function pairgeometry(grid::MapGrid, pair::CoregisteredPair, inputs::GeometryInp
         "GeometryInputs arrays are $(size(inputs.dem)) but the window is $(size(win)); the " *
         "inputs must cover exactly the window being computed"))
 
-    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata)
+    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata, coord)
     _fill_geometry!(result, grid, coord, pair.dt, inputs, tf, params, nodata, win)
     return result
 end

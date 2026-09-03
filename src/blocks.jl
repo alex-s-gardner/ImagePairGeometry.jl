@@ -130,7 +130,7 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
     shared = (window === nothing || serial) ? _resolve_transform(transform) : nothing
     win = window === nothing ? grid_window(grid, footprint_bounds(shared, coord)) : window
 
-    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata)
+    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata, coord)
     blocks = block_ranges(win, blocksize)
     n = ntasks === nothing ? min(length(blocks), Threads.nthreads()) : ntasks
 
@@ -184,5 +184,6 @@ end
 function _block_view(r::PairGeometry, local_block::CartesianIndices{2})
     ints = ntuple(i -> view(getfield(r, INT_BANDS[i]), local_block), length(INT_BANDS))
     floats = ntuple(i -> view(getfield(r, FLOAT_BANDS[i]), local_block), length(FLOAT_BANDS))
-    return PairGeometry(ints..., floats..., r.geotransform, r.crs, local_block, r.nodata)
+    return PairGeometry(ints..., floats..., r.geotransform, r.crs, local_block, r.nodata,
+                        r.coordinate)
 end

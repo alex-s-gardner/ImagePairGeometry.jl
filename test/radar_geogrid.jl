@@ -328,6 +328,20 @@ end
     end
 end
 
+@testset "the band layout comes from the coordinate, not the bands" begin
+    # `dem_only` is a radar case with no slope raster, so the branch that fills `off2vx_dr` never
+    # runs and every value in it is sentinel. Inferring the layout from that band would call this a
+    # projected result and write two-band off2vel files for a radar acquisition. The result carries
+    # its coordinate instead, so the layout is right regardless of which bands the inputs supported.
+    c = only(filter(x -> x.name == "dem_only", collect(GFIX.cases)))
+    r, _, coord, _, _ = radar_case(c)
+
+    @test all(==(r.nodata.output), r.off2vx_dr)
+    @test r.coordinate === coord
+    @test reference_files(r) === RADAR_REFERENCE_FILES
+    @test reference_files(r) === reference_files(coord)
+end
+
 @testset "an unsupported band writes nothing" begin
     # `dem_only` has no slope raster, so the reference writes one file of the nine.
     c = only(filter(x -> x.name == "dem_only", collect(GFIX.cases)))

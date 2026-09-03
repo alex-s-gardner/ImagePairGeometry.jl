@@ -54,7 +54,7 @@ Only part of `g` fits a `PointSet`. Use [`velocity_conversion`](@ref) for the op
 factors and the mask, which downstream velocity conversion needs.
 """
 function AutoRIFT.pointset(g::PairGeometry; chip_size = nothing, chip_size_0 = 240.0,
-                           pixel_size = nothing, coordinate = nothing)
+                           pixel_size = nothing, coordinate = g.coordinate)
     base = if chip_size !== nothing
         Int(chip_size)
     elseif pixel_size !== nothing
@@ -114,19 +114,12 @@ end
 
 # Which sign the y prior and the returned y displacement carry, by coordinate system.
 #
-# A dispatch rather than a keyword flag: the two paths disagree, the disagreement is silent — a wrong
-# sign sends the correlator searching the wrong way and returns a plausible velocity — and the answer
-# is a property of the coordinate system rather than a choice.
-#
-# `nothing` throws. A `PairGeometry` does not carry the coordinate that produced it, so there is no
-# value to infer from, and defaulting to either path would be wrong half the time.
+# A dispatch rather than a flag: the two paths disagree, the disagreement is silent — a wrong sign
+# sends the correlator searching the wrong way and returns a plausible velocity — and the answer is a
+# property of the coordinate system rather than a choice. The result carries its coordinate, so the
+# default is the right one and a caller has to go out of their way to be wrong.
 _prior_sign(::ProjectedCoordinate) = 1.0
 _prior_sign(::RadarCoordinate) = -1.0
-_prior_sign(::Nothing) = throw(ArgumentError(
-    "pass `coordinate` — the `ProjectedCoordinate` or `RadarCoordinate` the geometry was computed " *
-    "for. The y sign differs between them: the radar path negates the azimuth prior to reach " *
-    "AutoRIFT's north-up convention (`testautoRIFT.py:405-407`) and the projected path does not. " *
-    "A `PairGeometry` does not record which it came from, and guessing would be wrong half the time."))
 _prior_sign(x) = throw(ArgumentError(
     "`coordinate` must be a ProjectedCoordinate or a RadarCoordinate, got $(typeof(x))"))
 
@@ -161,7 +154,7 @@ and `+1.0` on the projected one, matching `testautoRIFT.py:790-791`, which negat
 `optical_flag == 0` guard as `:405-407`. Applying it is the caller's step, because the caller is what
 holds the correlator's output — but the value is supplied here so it need not be re-derived.
 """
-function velocity_conversion(g::PairGeometry; coordinate = nothing)
+function velocity_conversion(g::PairGeometry; coordinate = g.coordinate)
     sentinel = Int32(g.nodata.output)
     valid = g.location_x .!= sentinel
 
