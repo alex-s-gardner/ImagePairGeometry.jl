@@ -214,10 +214,42 @@ but the construction is matched rather than "corrected" to `always_xy = true`.
 
 ## The radar path
 
-The numerics are implemented and verified against isce3: the reference ellipsoid and TCN basis, the
-Hermite orbit interpolation, the 51-iteration `geo2rdr` solve, and `rdr2geo`. The layer above them is
-not built — `RadarCoordinate` still throws, so there is no radar entry to the per-point kernel. The
-remaining work, and the reproduced quirks it will need, are tracked in `RADAR_PLAN.md`.
+Implemented and verified against isce3: the reference ellipsoid and TCN basis, the Hermite orbit
+interpolation, the 51-iteration `geo2rdr` solve, `rdr2geo`, and `RadarCoordinate` with its footprint
+and ground pixel sizes. Not built: the per-point kernel, so `pairgeometry` cannot take a radar pair.
+The remaining work, and the reproduced quirks it will need, are tracked in `RADAR_PLAN.md`.
+
+### The ground pixel sizes come from geometry
+
+There is no radar geotransform, so `X_res`/`Y_res` have no analogue to read off. The reference
+recovers both (`geogridRadar.cpp:684-686`):
+
+- `grd_res = dr / sin(incidenceAngle)` — the slant range spacing projected onto the ground, using the
+  single scene-center incidence angle from `GeogridRadar.py:253-297`.
+- `azm_res = norm(satvmid) / prf` — the distance the platform travels between pulses.
+
+`satvmid` is interpolated at `tmidd` (`:435`), the `tmids` timestamp, which is the **orbit**-clock
+midpoint `sensingStart + (floor(nLines / 2) - 1) / prf`. Not the `sensingStart`-clock midpoint
+`sensingStart + 0.5 * nLines / prf` that initializes `tline` at `:328`. For an even line count the two
+differ by one pulse interval, so using the wrong one changes `azm_res` in its last bits — the first
+place the two-clock split has an observable consequence.
+
+### The footprint is solved for, not transformed
+
+`GeogridOptical.determineBbox` transforms four image corners. Its radar counterpart
+(`GeogridRadar.py:140-251`) has no corners to transform: it runs `rdr2geo` at 21 range positions on
+the first azimuth line, the same 21 on the last, and the two range edges of 19 intermediate azimuth
+fractions — 80 positions at two elevations each, 160 solves. The sampling is transcribed rather than
+chosen, since a coarser one moves the bounding box and shifts the grid window.
+
+The box agrees with the reference to 1e-12 relative rather than bitwise, inheriting `rdr2geo`'s bound;
+what is asserted exactly is the grid window it produces, which is the quantity a shift would corrupt
+and the same standard the projected path's footprint is held to.
+
+`GeogridRadar.py:246-248` swaps the axis order when the target EPSG is 4326, so a geographic output
+reports `(lat, lon)` limits where a projected one reports `(x, y)`. Not reproduced: `footprint_bounds`
+takes a transform rather than an EPSG code, so the caller's transform already fixes the axis
+convention, and re-deriving it from a code the function never sees would be guesswork.
 
 ### Why the radar numerics are transcribed rather than delegated
 

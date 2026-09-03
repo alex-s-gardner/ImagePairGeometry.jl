@@ -28,11 +28,11 @@ the exactness standard held against it, and every deliberate divergence.
 
 The projected-coordinate path is implemented and verified against the compiled reference.
 
-The radar path is partially built. Its numerics are in place and verified against isce3 — the
-reference ellipsoid, orbit interpolation, the zero-Doppler solve, and the radar-to-ground
-transformation. What is not yet built is the layer above them: [`RadarCoordinate`](@ref) still
-throws, so there is no radar entry point to the per-point kernel. `RADAR_PLAN.md` tracks the
-remaining work.
+The radar path is partially built: its numerics and its coordinate system are in place and verified
+against isce3, so [`RadarCoordinate`](@ref) is constructible and supplies a footprint and ground pixel
+sizes. What is missing is the per-point kernel — there is no radar `pointgeometry`, so
+[`pairgeometry`](@ref) cannot yet take a radar pair. See [Radar geometry](radar.md), and
+`RADAR_PLAN.md` for the remaining work.
 
 ## Walkthrough
 
@@ -176,9 +176,16 @@ Everything exported, plus the internals the reference-fidelity notes refer to. G
 each is defined in, which follows the layering: vector and rounding primitives, then coordinates and
 transforms, then the grid, then the kernel, then the driver.
 
+The radar path's own numerics — the ellipsoid, orbit interpolation, and the two geometry solves —
+are on the [Radar geometry](radar.md) page.
+
 ```@autodocs
 Modules = [ImagePairGeometry]
 Order = [:module, :type, :constant, :function, :macro]
+Pages = ["kernel/vecmath.jl", "kernel/rounding.jl", "coordinates.jl", "transforms.jl",
+         "pair.jl", "grid.jl", "kernel/searchrange.jl", "kernel/geometry.jl",
+         "kernel/outputs.jl", "nodata.jl", "result.jl", "driver.jl", "blocks.jl",
+         "interpolate.jl", "ImagePairGeometry.jl"]
 ```
 
 ## PROJ transforms
