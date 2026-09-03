@@ -19,23 +19,10 @@ using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, nodata_from, build_lattice, latticehalo,
                          _resolve_transform
 using Extents
-using JSON3
 using Proj
 using Test
 
-const IFIX = JSON3.read(read(joinpath(@__DIR__, "reference", "geogrid.json"), String))
-const IARR = load_npz(joinpath(@__DIR__, "reference", "geogrid_arrays.npz"))
-
 const KERNELS = (NearestNode(), Bilinear(), Bicubic())
-
-"""Grid, pair, window and inputs for a fixture case, as `test/blocks.jl` builds them."""
-function interp_case(name)
-    c = only(filter(x -> x.name == name, collect(IFIX.cases)))
-    s = fixture_scene(c)
-    win = grid_window(s.grid, footprint_bounds(s.transform(), s.coord))
-    return (; s.grid, s.pair, s.coord, win, s.params, s.same,
-            inputs = fixture_inputs(IARR, c, win), makepair = s.transform)
-end
 
 function interp_run(k, tf)
     return pairgeometry(k.grid, k.pair, k.inputs; transform = tf, window = k.win,
@@ -100,15 +87,35 @@ end
     @test L.flat
     @test L(250.0, 250.0, -200.0)[1:2] == L(250.0, 250.0, 4000.0)[1:2]
 
-    # A transform whose horizontal result does move with elevation is not flat, and then the two
-    # levels are blended: a query at the midpoint sits halfway between them.
+    # Only one level is tabulated for it, since a second would duplicate the first: that halves the
+    # transform calls the lattice costs to build, which for a same-datum pair is every real case.
+    @test size(L.x, 3) == 1
+
+    # A transform whose horizontal result does move with elevation gets both levels, and then a query
+    # blends them: at the midpoint it sits halfway between.
     shear(x, y, z) = (x + z, y, z)
     S = build_lattice(shear, Extent(X = (0.0, 500.0), Y = (0.0, 500.0)), (100.0, 100.0), Bilinear();
                       zrange = (0.0, 1000.0))
+    @test size(S.x, 3) == 2
     @test !S.flat
     @test S(250.0, 250.0, 0.0)[1] ≈ 250.0
     @test S(250.0, 250.0, 1000.0)[1] ≈ 1250.0
     @test S(250.0, 250.0, 500.0)[1] ≈ 750.0
+
+    # A shift that vanishes at the origin and grows with position still counts as z-dependent: the
+    # probe samples the lattice's corners and center, not one point.
+    skew(x, y, z) = (x + z * (x / 500.0), y, z)
+    K = build_lattice(skew, Extent(X = (0.0, 500.0), Y = (0.0, 500.0)), (100.0, 100.0), Bilinear();
+                      zrange = (0.0, 1000.0))
+    @test size(K.x, 3) == 2
+    @test !K.flat
+
+    # A degenerate range has nothing to interpolate along, so one level regardless of the transform.
+    D = build_lattice(shear, Extent(X = (0.0, 500.0), Y = (0.0, 500.0)), (100.0, 100.0), Bilinear();
+                      zrange = (500.0, 500.0))
+    @test size(D.x, 3) == 1
+    @test D.flat
+    @test D(250.0, 250.0, 500.0)[1] ≈ 750.0
 end
 
 @testset "a query outside the lattice throws" begin
@@ -136,7 +143,7 @@ end
 end
 
 @testset "InterpolatedTransform validation" begin
-    k = interp_case("cross_crs")
+    k = setup_case("cross_crs")
     @test_throws "lattice must be at least 1" InterpolatedTransform(
         k.makepair, k.grid, k.pair; lattice = 0, window = k.win)
     @test_throws "mode must be one of" InterpolatedTransform(
@@ -157,7 +164,7 @@ end
     # appears at 8x with `Bilinear`, and not at all through 16x with `Bicubic`; a scene with more
     # points near a tie would show it sooner, so the assertion is a bound of one rather than equality.
     for name in ("cross_crs", "cross_crs_3031", "cross_crs_nodata", "ratio_15m")
-        k = interp_case(name)
+        k = setup_case(name)
         exact = interp_run(k, k.makepair)
         for lattice in (1, 2, 4, 8), interpolation in (Bilinear(), Bicubic())
             tf = InterpolatedTransform(k.makepair, k.grid, k.pair;
@@ -188,7 +195,7 @@ end
     # must, so the bound is stated per spacing rather than as one number that would be slack at 2x
     # and tight at 8x. `docs/interpolated-transform.md` tabulates the measured values.
     bounds = Dict(1 => 1e-4, 2 => 4e-4, 4 => 1.6e-3, 8 => 6.4e-3)
-    k = interp_case("cross_crs")
+    k = setup_case("cross_crs")
     exact = interp_run(k, k.makepair)
     for lattice in (1, 2, 4, 8)
         tf = InterpolatedTransform(k.makepair, k.grid, k.pair;
@@ -204,7 +211,7 @@ end
     # What rules `:full` out as the default, asserted as a bound rather than left as prose. The
     # positional error is far below a pixel; what changes is which side of a rounding boundary a
     # point falls on, so the difference is exactly one pixel where it appears at all.
-    k = interp_case("cross_crs")
+    k = setup_case("cross_crs")
     exact = interp_run(k, k.makepair)
     sentinel = Int32(-32767)
     for lattice in (2, 4, 8)
@@ -241,7 +248,7 @@ end
     # At `lattice = 1` a node sits at every grid *point*, but the kernel queries the inverse a pixel
     # off those points, so only the forward lattice is node-aligned. Checking it directly keeps the
     # assertion about node alignment rather than about the whole pipeline.
-    k = interp_case("cross_crs")
+    k = setup_case("cross_crs")
     tf = _resolve_transform(k.makepair)
     dx, dy = abs.(ImagePairGeometry.gridspacing(k.grid))
     L = build_lattice(tf.forward, ImagePairGeometry._grid_bounds(k.grid, k.win), (dx, dy),
@@ -259,7 +266,7 @@ end
 @testset "an identity pair needs no lattice" begin
     # A same-CRS case dispatches to the closed-form `pointgeometry`, which is exact and makes no PROJ
     # call, so wrapping it in a lattice can only lose precision for no gain. It still has to work.
-    k = interp_case("same_crs")
+    k = setup_case("same_crs")
     @test k.same
     exact = interp_run(k, k.makepair)
     tf = InterpolatedTransform(k.makepair, k.grid, k.pair;
@@ -274,7 +281,7 @@ end
     # The invariant `pairgeometry_blocked` documents: a window computed in pieces gives the same bits
     # as the same window computed whole. A lattice sized from a *block* would break it, so this is
     # what asserts the lattice is built from the whole window instead.
-    k = interp_case("cross_crs")
+    k = setup_case("cross_crs")
     source = InMemoryInputs(k.inputs, k.win)
     ref = nothing
     for mode in (:hybrid, :full), blocksize in ((512, 512), (97, 211)), ntasks in (1, 4)
@@ -308,7 +315,7 @@ end
     # The factory itself is deliberately not required to be inferrable: `mode` is a runtime field, so
     # the two modes give two different `TransformPair` types. It is called once per task, and what the
     # per-point loop specializes on is the concrete pair it returns — so that is what is asserted.
-    k = interp_case("cross_crs")
+    k = setup_case("cross_crs")
     for mode in (:hybrid, :full)
         pair = InterpolatedTransform(k.makepair, k.grid, k.pair;
                                      lattice = 4, mode, window = k.win)()

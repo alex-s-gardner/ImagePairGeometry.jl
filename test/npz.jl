@@ -11,6 +11,7 @@
 
 using CodecZlib: DeflateDecompressor, transcode
 using ImagePairGeometry
+using JSON3
 using Proj
 using Test
 
@@ -172,4 +173,33 @@ function fixture_scene(case)
                       Proj.Transformation("EPSG:$(Int(img.epsg))", "EPSG:$(Int(dem.epsg))"))
     return (; coord, grid, pair, transform, same,
             params = GeometryParams(chip_size_0 = Float64(case.chip_size_0)))
+end
+
+"""
+    GEOGRID_FIXTURE, GEOGRID_ARRAYS
+
+The recorded reference outputs: the scalars from `reference/geogrid.json` and the band arrays from
+`reference/geogrid_arrays.npz`.
+
+Read once here rather than per test file, since more than one suite drives its cases from them.
+"""
+const GEOGRID_FIXTURE = JSON3.read(read(joinpath(@__DIR__, "reference", "geogrid.json"), String))
+const GEOGRID_ARRAYS = load_npz(joinpath(@__DIR__, "reference", "geogrid_arrays.npz"))
+
+"""
+    setup_case(name) -> NamedTuple
+
+Everything needed to run the fixture case called `name`: its grid, pair, image coordinate system,
+window, parameters and input rasters, plus a `makepair` thunk.
+
+`makepair` is a thunk, called once per task: a PROJ transformation wraps a `PJ*` on a context that
+PROJ documents as usable from one thread at a time, and building two concurrently on the shared
+global context corrupts its SQLite handle.
+"""
+function setup_case(name)
+    c = only(filter(x -> x.name == name, collect(GEOGRID_FIXTURE.cases)))
+    s = fixture_scene(c)
+    win = grid_window(s.grid, footprint_bounds(s.transform(), s.coord))
+    return (; s.grid, s.pair, s.coord, win, s.params, s.same,
+            inputs = fixture_inputs(GEOGRID_ARRAYS, c, win), makepair = s.transform)
 end
