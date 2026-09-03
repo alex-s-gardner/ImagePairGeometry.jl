@@ -26,13 +26,17 @@ the exactness standard held against it, and every deliberate divergence.
 
 ## Status
 
-The projected-coordinate path is implemented and verified against the compiled reference.
+Both coordinate paths are implemented and verified against the compiled reference:
+[`ProjectedCoordinate`](@ref) for imagery on a map projection, and [`RadarCoordinate`](@ref) for
+slant-range/azimuth imagery. [`pairgeometry`](@ref) and [`pairgeometry_blocked`](@ref) take either, and
+produce the reference's nine outputs on both.
 
-The radar path is partially built: its numerics and its coordinate system are in place and verified
-against isce3, so [`RadarCoordinate`](@ref) is constructible and supplies a footprint and ground pixel
-sizes. What is missing is the per-point kernel — there is no radar `pointgeometry`, so
-[`pairgeometry`](@ref) cannot yet take a radar pair. See [Radar geometry](radar.md), and
-`RADAR_PLAN.md` for the remaining work.
+The per-point kernel and the output expressions are shared. What differs is how the forward mapping is
+obtained — a coordinate transform against an orbit and a range–Doppler solve — and which spacings the
+outputs divide by. See [Radar geometry](radar.md).
+
+`REFERENCE.md` records the exactness standard held on each path, including two radar float bands that
+agree to 1.07e-4 rather than bitwise, and the measurements that place the cause outside this package.
 
 ## Walkthrough
 

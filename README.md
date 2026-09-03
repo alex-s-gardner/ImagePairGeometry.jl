@@ -26,7 +26,28 @@ The pixel displacement itself is estimated elsewhere, by a feature-tracking or c
 routine; this package supplies the geometry that routine searches within and the operator that
 converts its result to velocity.
 
+## The two paths
+
+Both coordinate systems are implemented and verified against the compiled reference.
+
+`ProjectedCoordinate` describes an image on a map projection — optical imagery, or a geocoded radar
+product. `RadarCoordinate` describes one in slant-range/azimuth, where a grid point reaches a pixel
+index through orbit state vectors and a range–Doppler solve rather than an affine relation. The
+per-point kernel and every output expression are shared; the two differ in how the forward mapping is
+obtained and in which spacings the outputs divide by.
+
+They differ enormously in cost. A projected point is around 19 ns under an identity transform and 990 ns
+across a real reprojection, where PROJ is roughly 95% of the work. A radar point is about 5.9 µs, of
+which the solve is 88% and PROJ 6% — so an ITS_LIVE-sized tile is seconds and a 5000×5000 grid a couple
+of minutes, and threading rather than transform caching is the lever that matters there.
+
+`REFERENCE.md` records the exactness standard held against the reference on each path, and every
+deliberate divergence.
+
 ## Approximating the projection
+
+This applies to the projected path. On the radar path PROJ is 6% of a point rather than 95%, so there
+is little for a lattice to remove — see `benchmark/radar_scale_perf.jl`.
 
 Where the grid and the imagery are in different CRSs, the projection library is most of the run: three
 calls per grid point, and a continental grid has hundreds of millions of them. `InterpolatedTransform`

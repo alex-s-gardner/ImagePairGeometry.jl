@@ -29,7 +29,8 @@ module ImagePairGeometryAutoRIFTExt
 # this loads and then throws a `MethodError` on the first call.
 
 using ImagePairGeometry
-using ImagePairGeometry: PairGeometry, chip_size_pixels
+using ImagePairGeometry: PairGeometry, chip_size_pixels, ProjectedCoordinate,
+                         RadarCoordinate
 using AutoRIFT
 
 """
@@ -53,7 +54,7 @@ Only part of `g` fits a `PointSet`. Use [`velocity_conversion`](@ref) for the op
 factors and the mask, which downstream velocity conversion needs.
 """
 function AutoRIFT.pointset(g::PairGeometry; chip_size = nothing, chip_size_0 = 240.0,
-                           pixel_size = nothing)
+                           pixel_size = nothing, coordinate = nothing)
     base = if chip_size !== nothing
         Int(chip_size)
     elseif pixel_size !== nothing
@@ -88,7 +89,15 @@ function AutoRIFT.pointset(g::PairGeometry; chip_size = nothing, chip_size_0 = 2
             "`dhdx`/`dhdy`). Supply them, or build the PointSet with an explicit radius."))
     end
 
-    prior(band) = [(v && b != sentinel) ? Float64(b) : 0.0 for (v, b) in zip(valid, band)]
+    prior(band, flip) = [(v && b != sentinel) ? flip * Float64(b) : 0.0
+                        for (v, b) in zip(valid, band)]
+
+    # The radar path negates the y prior; the projected path does not. `testautoRIFT.py:405-407` does
+    # it under `if optflag == 0`, and its own comment says why: "convert azimuth offset to vertical
+    # offset as used in autoRIFT convention". Azimuth increases along the track while AutoRIFT's `Dy`
+    # points down a north-up raster, so the two disagree in sign. A projected image's `+y`-down
+    # convention already matches, and negating there would send the correlator the wrong way.
+    dy_flip = _prior_sign(coordinate)
 
     # Chip-size bounds are per point; zero means unbounded in AutoRIFT, which is what a missing
     # bound should mean.
@@ -97,13 +106,32 @@ function AutoRIFT.pointset(g::PairGeometry; chip_size = nothing, chip_size_0 = 2
     return AutoRIFT.pointset(x, y;
                              search_radius_x = rx, search_radius_y = ry,
                              chip_size = base,
-                             dx_prior = prior(g.offset_x), dy_prior = prior(g.offset_y),
+                             dx_prior = prior(g.offset_x, 1.0),
+                             dy_prior = prior(g.offset_y, dy_flip),
                              chip_size_min_x = bound(g.chip_min_x),
                              chip_size_max_x = bound(g.chip_max_x))
 end
 
+# Which sign the y prior and the returned y displacement carry, by coordinate system.
+#
+# A dispatch rather than a keyword flag: the two paths disagree, the disagreement is silent — a wrong
+# sign sends the correlator searching the wrong way and returns a plausible velocity — and the answer
+# is a property of the coordinate system rather than a choice.
+#
+# `nothing` throws. A `PairGeometry` does not carry the coordinate that produced it, so there is no
+# value to infer from, and defaulting to either path would be wrong half the time.
+_prior_sign(::ProjectedCoordinate) = 1.0
+_prior_sign(::RadarCoordinate) = -1.0
+_prior_sign(::Nothing) = throw(ArgumentError(
+    "pass `coordinate` — the `ProjectedCoordinate` or `RadarCoordinate` the geometry was computed " *
+    "for. The y sign differs between them: the radar path negates the azimuth prior to reach " *
+    "AutoRIFT's north-up convention (`testautoRIFT.py:405-407`) and the projected path does not. " *
+    "A `PairGeometry` does not record which it came from, and guessing would be wrong half the time."))
+_prior_sign(x) = throw(ArgumentError(
+    "`coordinate` must be a ProjectedCoordinate or a RadarCoordinate, got $(typeof(x))"))
+
 """
-    velocity_conversion(g::PairGeometry) -> NamedTuple
+    velocity_conversion(g::PairGeometry; coordinate) -> NamedTuple
 
 The parts of `g` an `AutoRIFT.PointSet` cannot hold, which converting a correlated displacement to
 a map velocity needs.
@@ -115,6 +143,8 @@ a map velocity needs.
   outside the image are `false`.
 - `chip_scale_y`: median ratio of the y to the x chip-size bound, the aspect ratio the reference
   derives as `ScaleChipSizeY` (`testautoRIFT.py:376`). `NaN` where no chip-size band is present.
+- `dy_sign`: the factor a displacement from the correlator needs before use — `-1.0` on the radar
+  path, `+1.0` on the projected one. See below.
 - `nodata`: the sentinel marking a missing entry in the float arrays.
 
 Given a displacement `(dx, dy)` in pixels, in AutoRIFT's convention where `+y` points north:
@@ -125,10 +155,13 @@ vx = c.off2vx.dx .* (dx .* c.scale.x) .+ c.off2vx.dy .* (dy .* c.scale.y)
 vy = c.off2vy.dx .* (dx .* c.scale.x) .+ c.off2vy.dy .* (dy .* c.scale.y)
 ```
 
-AutoRIFT's `dy` is already in that convention; a displacement taken straight from
-`PairGeometry.offset_y`, which is in image axes, needs negating first. See `REFERENCE.md`.
+`dy_sign` is the factor to apply to a displacement coming *back* from the correlator before using it
+here, and it is the counterpart of the prior's negation in [`pointset`](@ref): `-1.0` on the radar path
+and `+1.0` on the projected one, matching `testautoRIFT.py:790-791`, which negates under the same
+`optical_flag == 0` guard as `:405-407`. Applying it is the caller's step, because the caller is what
+holds the correlator's output — but the value is supplied here so it need not be re-derived.
 """
-function velocity_conversion(g::PairGeometry)
+function velocity_conversion(g::PairGeometry; coordinate = nothing)
     sentinel = Int32(g.nodata.output)
     valid = g.location_x .!= sentinel
 
@@ -146,6 +179,7 @@ function velocity_conversion(g::PairGeometry)
             scale = (x = g.scale_x, y = g.scale_y),
             stable_surface = stable,
             chip_scale_y = chip_scale_y,
+            dy_sign = _prior_sign(coordinate),
             nodata = g.nodata.output)
 end
 

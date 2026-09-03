@@ -244,7 +244,7 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–009 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+**Status: complete.** All ten chunks. `src/radar/` holds five files; `test/radar_numerics.jl` and
 `test/radar_coordinate.jl` hold 1035 assertions against two fixtures generated from isce3 0.25.12. The
 full suite passes at 47093 radar assertions (9788 total before the eight-case fixture landed) and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
@@ -499,7 +499,7 @@ question moot at production scale — an ITS_LIVE-sized tile (915×915 at 120 m)
 a 5000×5000 grid **2.4 minutes**. The projected path needed the lattice because PROJ dominated it; the
 radar path does not because its own arithmetic does.
 
-### CHUNK-010: extensions and documentation
+### CHUNK-010: extensions and documentation — done
 
 `ImagePairGeometryRastersExt`: three-band off2vel writing on the radar path, two on the projected.
 
@@ -513,9 +513,21 @@ vertical offset as used in autoRIFT convention."* Azimuth increases along the tr
 The projected path's `+y`-down convention comes from the raster geometry itself and needs no
 negation. So the extension gets a method per coordinate type, not one shared path with a flag.
 
-`REFERENCE.md` gains a radar section: the quirks above, the exactness table extended with the radar
-cases, and the "Not yet implemented" section removed. `docs/src/index.md` and `README.md` drop the
-"radar path is not implemented" statements.
+`REFERENCE.md`'s radar section landed with the chunks that measured it, so this chunk only removed the
+last of the "not implemented" language from `README.md`, `docs/src/index.md` and `docs/src/radar.md`, and
+added a *The two paths* section to the README stating what each costs.
+
+The Rasters three-band writing landed in CHUNK-006, so what remained here was the AutoRIFT sign, and it
+turned out to be a gap rather than a rename: `pointset` supplied `dy_prior` **unnegated on both paths**,
+with the negation documented as the caller's job. That is the silent-failure shape — a wrong sign sends
+the correlator the wrong way and returns a plausible velocity — so `coordinate` is now a required
+keyword on both `pointset` and `velocity_conversion`, dispatching through `_prior_sign`, and passing
+nothing throws with the reason. `velocity_conversion` also returns `dy_sign` for the displacement coming
+back, the counterpart at `testautoRIFT.py:790-791`.
+
+The extension is exercised only when AutoRIFT is resolvable, which CI does not do. Verified locally in a
+temporary environment with both packages developed: all AutoRIFT tests pass, including a new one that
+asserts the throw and the projected sign.
 
 ## Open questions
 
