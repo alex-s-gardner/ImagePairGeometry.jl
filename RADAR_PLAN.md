@@ -244,14 +244,17 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–005 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
-`test/radar_coordinate.jl` hold 1034 assertions against two fixtures generated from isce3 0.25.12. The
-full suite passes at 6889 and the docs build clean. What measurement changed from the plan as written
+**Status: 001–006 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+`test/radar_coordinate.jl` hold 1035 assertions against two fixtures generated from isce3 0.25.12. The
+full suite passes at 7016 and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
 
 `RadarCoordinate` is constructible and supplies a footprint and the ground pixel sizes;
-`CoregisteredPair` is parameterized on the coordinate type. What 006 and 007 still need is the
-per-point kernel — there is no radar `pointgeometry`, so `pairgeometry` cannot take a radar pair yet.
+`CoregisteredPair` is parameterized on the coordinate type; and the output kernel takes a spacing pair
+rather than reading a coordinate, so it serves both paths.
+
+What remains before a radar pair can reach `pairgeometry` is CHUNK-007: a `pointgeometry` method for
+`RadarCoordinate`, composing `geo2rdr` with the range–Doppler solve at `tline + 1/prf`.
 
 ### CHUNK-001: ellipsoid and TCN basis — done
 
@@ -372,19 +375,27 @@ the `sensing_start`-clock one.** `geogridRadar.cpp:686` computes it from `satvmi
 first place the two-clock distinction has an observable consequence, which is why it is worth having
 transcribed both expressions rather than reconciling them.
 
-### CHUNK-006: generalize the shared kernel
+### CHUNK-006: generalize the shared kernel — done
 
 No new behavior — make `outputs.jl` serve both paths, verified by the existing suite staying
 bitwise.
 
-`offset_to_velocity` and `scale_factors` take a nominal spacing pair as an argument rather than
-reading `ProjectedCoordinate`. `PairGeometry` gains `off2vx_dr` and `off2vy_dr`, and
-`REFERENCE_FILES` maps the off2vel files to three bands each. The projected path leaves the new
-fields at their sentinel, so its GeoTIFF output must stay two-band — the reference writes two there
-and a downstream reader would break on three.
+`offset_to_velocity`, `scale_factors` and `search_pixels` take a nominal spacing pair as an argument
+rather than reading `ProjectedCoordinate`; `spacing(c::ProjectedCoordinate)` supplies it on that path.
+`PairGeometry` gains `off2vx_dr` and `off2vy_dr`, filled by `axis_velocity`, which needs `times_year`
+because band 3 *multiplies* by the year-seconds chain where every other output divides by it
+(`geogridRadar.cpp:1185-1187`).
 
-Verify: every existing test unchanged and still bitwise. This chunk is a refactor and any output
-difference is a defect.
+The band layout is two constants and a dispatch, not one constant with a flag. `REFERENCE_FILES` keeps
+the projected path's two-band off2vel files and `RADAR_REFERENCE_FILES` has the radar path's three;
+`reference_files` selects between them, and its `PairGeometry` method reads the choice off whether
+`off2vx_dr` is all-sentinel. `write_geotiffs` calls that rather than hardcoding one layout, since a
+consumer indexes bands positionally and an extra band would shift every band after it with no error.
+
+Verified: 7016 assertions pass, every existing band still bitwise. Four testsets *gained* assertions
+because they iterate `FLOAT_BANDS`, which is now two entries longer — the new fields are checked as
+sentinel-filled on the projected path. Two new tests pin the layout invariant directly: a projected
+result writes two-band off2vel files, and a result with the radar band filled writes three.
 
 ### CHUNK-007: the radar per-point kernel
 

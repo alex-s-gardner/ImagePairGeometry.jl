@@ -166,6 +166,12 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     pix_x = chip_size_pixels(params.chip_size_0, xsize(coord))
     pix_y = chip_size_pixels(params.chip_size_0, ysize(coord))
 
+    # Nominal pixel spacing, signed, as the output expressions divide by it. Constant for the whole
+    # window on this path — a projected image has one spacing — so it is hoisted out of the loop.
+    # The radar path's azimuth component is per point, which is why these functions take a value
+    # rather than reading it off the coordinate.
+    sp = spacing(coord)
+
     out = Int32(nd.output)
     fout = nd.output
 
@@ -205,14 +211,14 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
 
             # The operator is singular for a surface perpendicular to the image plane.
             if cross_check(g) > 1.0
-                o = offset_to_velocity(g, coord, dt)
+                o = offset_to_velocity(g, sp, dt)
                 r.off2vx_dx[k] = o[1]
                 r.off2vx_dy[k] = o[2]
                 r.off2vy_dx[k] = o[3]
                 r.off2vy_dy[k] = o[4]
             end
 
-            sfx, sfy = scale_factors(g, coord)
+            sfx, sfy = scale_factors(g, sp)
             r.scale_x[k] = sfx
             r.scale_y[k] = sfy
 
@@ -227,7 +233,7 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
                 else
                     sr1 = close_slope_parallel(s1x, s1y, normal)
                     sr2 = close_slope_parallel(-s1x, s1y, normal)
-                    sx, sy = search_pixels(sr1, sr2, g, coord, dt)
+                    sx, sy = search_pixels(sr1, sr2, g, sp, dt)
                     r.search_x[k] = cround32(sx)
                     r.search_y[k] = cround32(sy)
                 end

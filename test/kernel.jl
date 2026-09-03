@@ -12,7 +12,7 @@ using ImagePairGeometry: PointGeometry, pointgeometry, pixel_index, inbounds, cr
                          scale_factors, search_pixels, chip_pixels, chip_size_pixels,
                          SearchRangeScaling, searchrange_scale, scaled_searchrange,
                          inverse, isidentity, dot3, norm3, unitvec3,
-                         NoDataPolicy, nodata_from, ismissingval
+                         NoDataPolicy, nodata_from, ismissingval, spacing
 using StaticArrays: SVector
 using Test
 
@@ -47,7 +47,7 @@ end
     @test g.ylen === 30.0
 
     # Scale factors are exactly one, no rounding involved.
-    @test scale_factors(g, c) === (1.0, 1.0)
+    @test scale_factors(g, spacing(c)) === (1.0, 1.0)
 
     # Pixel index: 150 m at 30 m spacing is 5 pixels in, in both axes.
     @test pixel_index(g, c) === (5.0, 5.0)
@@ -72,7 +72,7 @@ end
             reinterpret(UInt64, a.xlen) == reinterpret(UInt64, b.xlen) &&
             reinterpret(UInt64, a.ylen) == reinterpret(UInt64, b.ylen) &&
             pixel_index(a, c) == pixel_index(b, c) &&
-            scale_factors(a, c) == scale_factors(b, c)
+            scale_factors(a, spacing(c)) == scale_factors(b, spacing(c))
     end
     @test all(agrees(300000.0 + i * 120.0, 7800000.0 - j * 120.0) for i in 0:40, j in 0:40)
 end
@@ -90,7 +90,7 @@ end
     @test g.yunit === v3(0, -1, 0)
     @test g.xlen === 15.0
     @test g.ylen === 15.0
-    @test scale_factors(g, c) === (0.5, 0.5)
+    @test scale_factors(g, spacing(c)) === (0.5, 0.5)
 
     # A 90-degree rotation: the image x axis points along grid +y.
     rot = AffineTransform(a = 0.0, b = -1.0, c = 0.0, d = 1.0, e = 0.0, f = 0.0)
@@ -99,7 +99,7 @@ end
     @test gr.yunit ≈ v3(-1, 0, 0)
     @test gr.xlen ≈ 30.0        # rotation preserves length
     @test gr.ylen ≈ 30.0
-    @test all(isapprox(1.0), scale_factors(gr, c))
+    @test all(isapprox(1.0), scale_factors(gr, spacing(c)))
 end
 
 @testset "AffineTransform inverse round-trips" begin
@@ -175,8 +175,8 @@ end
     dt = 91 * 86400.0
 
     @test cross_check(g) > 1.0       # operator is valid here
-    vx_dx, vx_dy, vy_dx, vy_dy = offset_to_velocity(g, c, dt)
-    sfx, sfy = scale_factors(g, c)
+    vx_dx, vx_dy, vy_dx, vy_dy = offset_to_velocity(g, spacing(c), dt)
+    sfx, sfy = scale_factors(g, spacing(c))
     tol = 30.0 / dt * YR             # the rounding to whole pixels, expressed in m/yr
 
     for (vx, vy) in ((300.0, 0.0), (0.0, 250.0), (-120.0, 80.0), (1000.0, -1000.0),
@@ -197,8 +197,8 @@ end
     c = ProjectedCoordinate(origin = (0.0, 0.0), spacing = (30.0, -30.0), size = (100, 100))
     n = surface_normal(0.01, 0.02)
     g = pointgeometry(transform_pair(IdentityTransform()), 0.0, 0.0, 0.0, c, n)
-    a = offset_to_velocity(g, c, YR)
-    b = offset_to_velocity(g, c, 2 * YR)
+    a = offset_to_velocity(g, spacing(c), YR)
+    b = offset_to_velocity(g, spacing(c), 2 * YR)
     for k in 1:4
         @test b[k] ≈ a[k] / 2 rtol = 1e-12
     end
@@ -237,12 +237,12 @@ end
 @testset "scale_factors are one under identity, per-point otherwise" begin
     c = ProjectedCoordinate(origin = (0.0, 0.0), spacing = (30.0, -30.0), size = (100, 100))
     g = pointgeometry(transform_pair(IdentityTransform()), 0.0, 0.0, 0.0, c, NO_NORMAL)
-    @test scale_factors(g, c) === (1.0, 1.0)
+    @test scale_factors(g, spacing(c)) === (1.0, 1.0)
 
     # A 0.9996-style shrink, as at a UTM central meridian.
     t = AffineTransform(a = 1 / 0.9996, b = 0.0, c = 0.0, d = 0.0, e = 1 / 0.9996, f = 0.0)
     gs = pointgeometry(transform_pair(t), 0.0, 0.0, 0.0, c, NO_NORMAL)
-    @test all(isapprox(0.9996), scale_factors(gs, c))
+    @test all(isapprox(0.9996), scale_factors(gs, spacing(c)))
 end
 
 @testset "search_pixels" begin
@@ -253,17 +253,17 @@ end
     # 300 m/yr search over a year at 30 m pixels: 10 pixels each way.
     sr1 = close_slope_parallel(300.0, 300.0, n)
     sr2 = close_slope_parallel(-300.0, 300.0, n)
-    @test search_pixels(sr1, sr2, g, c, YR) === (10.0, 10.0)
+    @test search_pixels(sr1, sr2, g, spacing(c), YR) === (10.0, 10.0)
 
     # Always at least one pixel, however small the range.
     tiny1 = close_slope_parallel(0.001, 0.001, n)
     tiny2 = close_slope_parallel(-0.001, 0.001, n)
-    @test search_pixels(tiny1, tiny2, g, c, YR) === (1.0, 1.0)
+    @test search_pixels(tiny1, tiny2, g, spacing(c), YR) === (1.0, 1.0)
 
     # Asymmetric ranges give asymmetric extents, and the result is a magnitude.
     a1 = close_slope_parallel(900.0, 90.0, n)
     a2 = close_slope_parallel(-900.0, 90.0, n)
-    sx, sy = search_pixels(a1, a2, g, c, YR)
+    sx, sy = search_pixels(a1, a2, g, spacing(c), YR)
     @test sx === 30.0 && sy === 3.0
 end
 
@@ -297,7 +297,7 @@ end
         sr = scaled_searchrange(p, 500.0, s)
         sr1 = close_slope_parallel(sr, sr, n)
         sr2 = close_slope_parallel(-sr, sr, n)
-        first(search_pixels(sr1, sr2, g, c, dt))
+        first(search_pixels(sr1, sr2, g, spacing(c), dt))
     end
     @test !issorted(px)         # 91 days searches wider than 182
 
@@ -359,13 +359,13 @@ end
     g = pointgeometry(tf, 1.0, 2.0, 3.0, c, n)
     @test @inferred(pixel_index(g, c)) isa NTuple{2,Float64}
     @test @inferred(cross_check(g)) isa Float64
-    @test @inferred(offset_to_velocity(g, c, YR)) isa NTuple{4,Float64}
-    @test @inferred(scale_factors(g, c)) isa NTuple{2,Float64}
+    @test @inferred(offset_to_velocity(g, spacing(c), YR)) isa NTuple{4,Float64}
+    @test @inferred(scale_factors(g, spacing(c))) isa NTuple{2,Float64}
     @test @inferred(pixel_offset(v3(1, 1, 1), g, YR)) isa NTuple{2,Float64}
 
     @test @allocated(pointgeometry(tf, 1.0, 2.0, 3.0, c, n)) == 0
     @test @allocated(pointgeometry(af, 1.0, 2.0, 3.0, c, n)) == 0
-    @test @allocated(offset_to_velocity(g, c, YR)) == 0
+    @test @allocated(offset_to_velocity(g, spacing(c), YR)) == 0
     @test @allocated(cross_check(g)) == 0
 end
 

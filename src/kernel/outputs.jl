@@ -32,6 +32,37 @@ const SECONDS_PER_YEAR_TERMS = (365.0, 24.0, 3600.0)
     x / SECONDS_PER_YEAR_TERMS[1] / SECONDS_PER_YEAR_TERMS[2] / SECONDS_PER_YEAR_TERMS[3]
 
 """
+    times_year(x) -> Float64
+
+`x` multiplied by one year in seconds, in the reference's multiplication order:
+`x * 365.0 * 24.0 * 3600.0`.
+
+The inverse direction from [`per_year`](@ref), and a separate function rather than a reciprocal
+because the reference writes it as a chain of multiplications (`geogridRadar.cpp:1185-1187`).
+Multiplying by 31_536_000 in one step, or dividing by the reciprocal, gives a different last bit.
+
+Used only by the radar path's third off2vel band, which converts a pixel displacement straight to a
+velocity along its own axis rather than into map coordinates.
+"""
+@inline times_year(x::Float64) =
+    x * SECONDS_PER_YEAR_TERMS[1] * SECONDS_PER_YEAR_TERMS[2] * SECONDS_PER_YEAR_TERMS[3]
+
+"""
+    axis_velocity(spacing, dt) -> Float64
+
+Velocity per pixel of displacement along one image axis: `spacing / dt` scaled to meters per year.
+
+The radar path's third off2vel band (`geogridRadar.cpp:1185-1187`), written
+`dr / dt * 365.0 * 24.0 * 3600.0` for range and with the along-track step for azimuth. Where the
+two-by-two operator resolves a displacement into *map* axes, this converts it along the image's own
+axis, which is the quantity a range- or azimuth-only measurement needs.
+
+The projected path writes no such band — its off2vel files have two bands, not three — so this is
+unused there.
+"""
+@inline axis_velocity(spacing::Float64, dt::Float64) = times_year(spacing / dt)
+
+"""
     close_slope_parallel(vx, vy, normal) -> SVector{3,Float64}
 
 A horizontal velocity completed to three components by requiring flow parallel to the surface.
@@ -70,11 +101,16 @@ and the axis lengths come from `g`, so projection distortion is accounted for.
 end
 
 """
-    offset_to_velocity(g::PointGeometry, c::ProjectedCoordinate, dt)
+    offset_to_velocity(g::PointGeometry, spacing::NTuple{2,Float64}, dt)
         -> NTuple{4,Float64}
 
 The two-by-two operator converting a pixel displacement to a map velocity, as
 `(vx_from_dx, vx_from_dy, vy_from_dx, vy_from_dy)`.
+
+`spacing` is the nominal pixel size along each image axis — signed on the projected path, where it is
+the coordinate's `spacing`; on the radar path it is `(dr, |da|)`, the range sample spacing and the
+per-point along-track step. A value rather than a coordinate because the two paths supply it
+differently and the radar one varies per point (`geogridRadar.cpp:1180-1188`).
 
 Given a displacement `(dx, dy)` in pixels, the map velocity is
 
@@ -93,7 +129,7 @@ bit-identical.
 Valid only where [`cross_check`](@ref) exceeds one degree; the caller checks, as the reference
 does, and writes nodata otherwise.
 """
-@inline function offset_to_velocity(g::PointGeometry, c::ProjectedCoordinate, dt::Float64)
+@inline function offset_to_velocity(g::PointGeometry, spacing::NTuple{2,Float64}, dt::Float64)
     n = g.normal
     xu = g.xunit
     yu = g.yunit
@@ -104,8 +140,8 @@ does, and writes nodata otherwise.
 
     # Nominal spacing here, not the per-point axis length: the reference uses `XSize`/`YSize`,
     # and the difference between the two is what `scale_factors` carries separately.
-    xden = per_year(dt / Float64(c.spacing[1]))
-    yden = per_year(dt / Float64(c.spacing[2]))
+    xden = per_year(dt / spacing[1])
+    yden = per_year(dt / spacing[2])
 
     vx_dx = n[3] / xden * (n[3] * yu[2] - n[2] * yu[3]) / det
     vx_dy = -n[3] / yden * (n[3] * xu[2] - n[2] * xu[3]) / det
@@ -116,22 +152,27 @@ does, and writes nodata otherwise.
 end
 
 """
-    scale_factors(g::PointGeometry, c::ProjectedCoordinate) -> NTuple{2,Float64}
+    scale_factors(g::PointGeometry, spacing::NTuple{2,Float64}) -> NTuple{2,Float64}
 
 Ratio of true ground distance to nominal pixel spacing, per axis.
 
 Matches `geogridOptical.cpp:841-842`: the physical length of a one-pixel step in grid coordinates
-divided by the nominal spacing. Exactly 1 where the grid and image share a CRS; away from that,
-the map projection's local scale distortion — around 0.9996 at a UTM zone's central meridian.
+divided by the nominal spacing, in absolute value. Exactly 1 where the grid and image share a CRS;
+away from that, the map projection's local scale distortion — around 0.9996 at a UTM zone's central
+meridian.
+
+The radar equivalent is `geogridRadar.cpp:1190-1191`, the same ratio against `dr` and the along-track
+step.
 
 The correlator multiplies its measured displacement by these before applying
 [`offset_to_velocity`](@ref), which is why that operator uses nominal spacing.
 """
-@inline scale_factors(g::PointGeometry, c::ProjectedCoordinate) =
-    (g.xlen / abs(Float64(c.spacing[1])), g.ylen / abs(Float64(c.spacing[2])))
+@inline scale_factors(g::PointGeometry, spacing::NTuple{2,Float64}) =
+    (g.xlen / abs(spacing[1]), g.ylen / abs(spacing[2]))
 
 """
-    search_pixels(sr1, sr2, g::PointGeometry, c::ProjectedCoordinate, dt) -> NTuple{2,Float64}
+    search_pixels(sr1, sr2, g::PointGeometry, spacing::NTuple{2,Float64}, dt)
+        -> NTuple{2,Float64}
 
 Search half-extent in pixels along each image axis, from a search range already scaled and
 slope-closed.
@@ -144,9 +185,9 @@ zero extent would mean no search at all.
 Matches `geogridOptical.cpp:849-863`.
 """
 @inline function search_pixels(sr1::SVector{3,Float64}, sr2::SVector{3,Float64},
-                               g::PointGeometry, c::ProjectedCoordinate, dt::Float64)
-    dx = Float64(c.spacing[1])
-    dy = Float64(c.spacing[2])
+                               g::PointGeometry, spacing::NTuple{2,Float64}, dt::Float64)
+    dx = spacing[1]
+    dy = spacing[2]
 
     sx = abs(cround(per_year(dot3(sr1, g.xunit) * dt / dx)))
     sy = abs(cround(per_year(dot3(sr1, g.yunit) * dt / dy)))

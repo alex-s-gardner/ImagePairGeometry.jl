@@ -103,6 +103,20 @@ xsize(c::ProjectedCoordinate) = abs(c.spacing[1])
 ysize(c::ProjectedCoordinate) = abs(c.spacing[2])
 
 """
+    spacing(c::ProjectedCoordinate) -> NTuple{2,Float64}
+
+The nominal pixel spacing as a `Float64` pair, **signed** — negative `y` for a north-up raster.
+
+What the output expressions divide by, so the sign matters: [`xsize`](@ref) and [`ysize`](@ref) are
+the absolute values and are what the chip-size conversion wants instead.
+
+Not part of the [`AbstractImageCoordinate`](@ref) interface. A radar image has no single spacing to
+return — its along-track step is per grid point — so the kernel takes the pair as an argument and each
+path supplies it its own way.
+"""
+spacing(c::ProjectedCoordinate) = (Float64(c.spacing[1]), Float64(c.spacing[2]))
+
+"""
     nsamples(c::AbstractImageCoordinate) -> Int
     nlines(c::AbstractImageCoordinate) -> Int
 
