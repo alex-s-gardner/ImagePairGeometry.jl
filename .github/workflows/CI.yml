@@ -47,6 +47,19 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      # AutoRIFT is unregistered, so the test environment cannot name it in `[deps]` — Pkg demands a
+      # registered package there — and `buildpkg` cannot resolve it. Adding it by URL here is what
+      # lets the handoff tests run rather than be skipped; without it the extension is never loaded.
+      #
+      # `realdata-test` rather than `main`: the extension passes `chip_size_min_x`/`chip_size_max_x`
+      # to `AutoRIFT.pointset`, which exists on that branch and not yet on main. Move this to `main`
+      # once the branch merges there.
+      - name: Add unregistered test dependencies
+        run: |
+          julia --project=test -e '
+            import Pkg
+            Pkg.develop(path = ".")
+            Pkg.add(url = "https://github.com/alex-s-gardner/AutoRIFT.jl", rev = "realdata-test")'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
