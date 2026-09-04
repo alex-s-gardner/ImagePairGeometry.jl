@@ -12,6 +12,8 @@
 # in the transcription would move it by whole points.
 
 using ImagePairGeometry
+import GeoFormatTypes as GFT
+import GeoInterface
 using ImagePairGeometry: gridspacing, gridorigin, window_geotransform, gridpoint_center,
                          DEFAULT_ZRANGE
 using Extents: Extent
@@ -184,4 +186,36 @@ end
     id = (x, y, z) -> (x, y, z)
     @test @inferred(footprint_bounds(id, coord)) isa Extent
     @test @inferred(grid_window(grid, footprint_bounds(id, coord))) isa CartesianIndices{2}
+end
+
+@testset "the CRS follows the GeoJulia convention" begin
+    # `GeoInterface.crs` rather than the field, and a `GeoFormatTypes.GeoFormat` rather than a bare
+    # integer — so a consumer reads it the same way here as from a `Raster`, and the Rasters extension
+    # has one type to write rather than a conversion of its own.
+    gt = (0.0, 10.0, 0.0, 100.0, 0.0, -10.0)
+    g = MapGrid(geotransform = gt, size = (10, 10), crs = 32624)
+    @test GeoInterface.crs(g) === GFT.EPSG(32624)
+    @test GeoInterface.crs(g) isa GFT.GeoFormat
+
+    # An EPSG integer and the `GeoFormat` it denotes are the same thing to the constructor.
+    @test GeoInterface.crs(MapGrid(geotransform = gt, size = (10, 10), crs = GFT.EPSG(32624))) ===
+          GeoInterface.crs(g)
+
+    # A WKT or PROJ string is already a `GeoFormat` and passes through untouched.
+    wkt = GFT.WellKnownText(GFT.CRS(), "PROJCS[\"dummy\"]")
+    @test GeoInterface.crs(MapGrid(geotransform = gt, size = (10, 10), crs = wkt)) === wkt
+
+    @test GeoInterface.crs(MapGrid(geotransform = gt, size = (10, 10))) === nothing
+
+    # Anything else is refused rather than stored and misinterpreted downstream.
+    @test_throws "crs must be a GeoFormatTypes.GeoFormat" MapGrid(geotransform = gt,
+                                                                  size = (10, 10),
+                                                                  crs = "EPSG:32624")
+
+    # A result inherits its grid's, and reads back the same way.
+    a = ImageFootprint(origin = (5.0, 95.0), spacing = (5.0, -5.0), size = (16, 16))
+    pair = coregister(a, a; dt = 86400.0)
+    win = grid_window(g, footprint_bounds(IdentityTransform(), pair.coordinate))
+    r = pairgeometry(g, pair, GeometryInputs(dem = zeros(size(win))); window = win)
+    @test GeoInterface.crs(r) === GeoInterface.crs(g)
 end

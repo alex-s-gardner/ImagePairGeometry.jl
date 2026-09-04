@@ -17,6 +17,22 @@
 # from the reference image alone.
 
 """
+    _as_geoformat(crs) -> Union{Nothing,GFT.GeoFormat}
+
+A CRS in the form the GeoJulia packages pass around: a `GeoFormatTypes.GeoFormat`, or `nothing`.
+
+An `Integer` is read as an EPSG code, since that is how a geogrid case is usually specified and how
+the reference's own parameters arrive. Anything already a `GeoFormat` passes through, so a caller
+holding a WKT or a PROJ string is not forced to convert. Normalising here rather than at each
+consumer means `GeoInterface.crs` has one type to return and the Rasters extension has one to write.
+"""
+_as_geoformat(::Nothing) = nothing
+_as_geoformat(epsg::Integer) = GFT.EPSG(Int(epsg))
+_as_geoformat(crs::GFT.GeoFormat) = crs
+_as_geoformat(x) = throw(ArgumentError(
+    "crs must be a GeoFormatTypes.GeoFormat, an Integer EPSG code, or nothing; got $(typeof(x))"))
+
+"""
     AbstractImageCoordinate
 
 The coordinate system of an image, determining how a map-projected grid point maps to a pixel

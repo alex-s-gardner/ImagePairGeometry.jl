@@ -43,6 +43,21 @@ function write_input(path, arr, gt, epsg)
     return path
 end
 
+# A radar coordinate, only ever used to select the three-band output layout — the geometry is never
+# computed against it here, so the orbit need only be well-formed.
+const RADAR_COORD = let
+    R = 7.0e6
+    w = sqrt(3.986004418e14 / R^3)
+    t = [(i - 1) * 10.0 for i in 1:8]
+    pos = [ImagePairGeometry.SVector{3,Float64}(R * cos(w * ti), 0.0, R * sin(w * ti)) for ti in t]
+    vel = [ImagePairGeometry.SVector{3,Float64}(-R * w * sin(w * ti), 0.0, R * w * cos(w * ti))
+           for ti in t]
+    orbit = ImagePairGeometry.Orbit(t[1], 10.0, pos, vel)
+    RadarCoordinate(; orbit, starting_range = 8.0e5, dr = 2.33, sensing_start = 10.0, prf = 486.0,
+                    nsamples = 1000, nlines = 1000, look_side = LookRight, wavelength = 0.055,
+                    incidence_angle = deg2rad(40))
+end
+
 const GT = (295000.0, 120.0, 0.0, 7805000.0, 0.0, -120.0)
 const EPSG = 32624
 const NGRID = 120
@@ -174,15 +189,18 @@ end
             end
         end
 
-        # A result with the radar band filled selects the three-band layout, so the same writer
-        # produces the reference's radar output without being told which path it is on.
+        # A result computed for a radar coordinate selects the three-band layout, so the same writer
+        # produces the reference's radar output without being told which path it is on. The layout
+        # comes from the coordinate the result carries, not from which bands happen to be filled —
+        # inferring it from `off2vx_dr` misclassified a radar result computed without a slope raster,
+        # since the branch that fills that band is skipped entirely.
         radar = ImagePairGeometry.PairGeometry(
-            (getfield(r, f) for f in propertynames(r)[1:11])...,
-            r.off2vx_dx, r.off2vx_dy, r.off2vy_dx, r.off2vy_dy,
-            fill(1.0, size(r)), fill(2.0, size(r)),      # off2vx_dr, off2vy_dr
-            r.scale_x, r.scale_y,
-            r.geotransform, r.crs, r.window, r.nodata)
+            (getfield(r, f) for f in ImagePairGeometry.INT_BANDS)...,
+            (getfield(r, f) for f in ImagePairGeometry.FLOAT_BANDS)...,
+            r.geotransform, r.crs, r.window, r.nodata, RADAR_COORD)
         @test ImagePairGeometry.reference_files(radar) === ImagePairGeometry.RADAR_REFERENCE_FILES
+        # And the discriminator really is the coordinate: these bands are all sentinel.
+        @test all(==(radar.nodata.output), radar.off2vx_dr)
         rout = mktempdir()
         write_geotiffs(rout, radar)
         for f in ("window_rdr_off2vel_x_vec.tif", "window_rdr_off2vel_y_vec.tif")

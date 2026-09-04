@@ -244,9 +244,9 @@ Ordered so each is verifiable against a fixture before the next depends on it. C
 004 are self-contained numerics with their own reference oracles; only from 005 does the port touch
 existing package code.
 
-**Status: 001–007 complete.** `src/radar/` holds five files; `test/radar_numerics.jl` and
+**Status: complete.** All ten chunks. `src/radar/` holds five files; `test/radar_numerics.jl` and
 `test/radar_coordinate.jl` hold 1035 assertions against two fixtures generated from isce3 0.25.12. The
-full suite passes at 7068 and the docs build clean. What measurement changed from the plan as written
+full suite passes at 47093 radar assertions (9788 total before the eight-case fixture landed) and the docs build clean. What measurement changed from the plan as written
 is recorded in *Findings* below and in `REFERENCE.md`.
 
 `RadarCoordinate` is constructible and supplies a footprint and the ground pixel sizes;
@@ -254,9 +254,10 @@ is recorded in *Findings* below and in `REFERENCE.md`.
 rather than reading a coordinate; and `pointgeometry` has a `RadarCoordinate` method returning the same
 `PointGeometry` the projected path produces.
 
-What remains before a radar pair can reach `pairgeometry` is CHUNK-008: dispatching the driver loop on
-the coordinate type, and the whole-kernel fixture that finally checks the per-point values against the
-compiled reference.
+A radar pair reaches `pairgeometry` and produces all nine outputs, checked against the compiled
+reference over eight cases. What remains is CHUNK-009 (blocking and threading, where the groundwork is
+already in place — `_run_block!` takes any `AbstractImageCoordinate`) and CHUNK-010 (the extensions and
+documentation, including the radar-only y-sign negation).
 
 ### CHUNK-001: ellipsoid and TCN basis — done
 
@@ -441,7 +442,7 @@ that, a boxing hypothesis for the same phantom allocation led to rewriting the r
 `foldl`, which changed nothing and was reverted. The lesson is the one the earlier benchmark work
 already taught: measure with a warmed-up harness, not with `@allocated` in global scope.
 
-### CHUNK-008: driver dispatch and whole-kernel fixture
+### CHUNK-008: driver dispatch and whole-kernel fixture — done
 
 `_fill_geometry!` dispatches on `AbstractImageCoordinate`. Since CHUNK-006 moved the coordinate
 system's contribution behind `pointgeometry` and a spacing pair, the loop body should be shared;
@@ -451,9 +452,22 @@ method, not a second copy of the loop.
 `gen_geogrid_radar.py` and `test/radar_geogrid.jl`: all nine outputs, every case listed above,
 Tier A bitwise and Tier B bounded, with the observed maximum reported on every run.
 
-Records the measured `cross_check` range across the fixture cases, per the `acos` concern above.
+Eight cases, 47093 assertions. The two that earn their place beyond value comparison:
 
-### CHUNK-009: blocked and threaded
+**`oversize`** puts a grid larger than the swath, so 5539 of 19502 points fall outside and the
+`rgind`/`azind` bounds test at `:1112` fires geometrically rather than from input nodata. The two sides
+agree on *which* points are outside for **all 19502** — a systematic error in the solve would move the
+swath edge rather than only the last bits, so this is the check that would catch one.
+
+**`dem_slope`** supplies a slope raster with no velocity or search range, so the reference writes four
+files of nine: the operator and scale factors need only the normal.
+
+The `acos` concern is closed. Agreement on where the operator gate fires — `cross_check > 1.0`, the
+place a one-ULP `acos` difference could flip an output — holds on **all 29012 points** across every
+case. Combined with the 40.2° margin measured in CHUNK-007, the gate is unreachable at real incidence
+angles on both paths.
+
+### CHUNK-009: blocked and threaded — done
 
 `pairgeometry_blocked` for radar. Points remain independent, so this is threading only — but
 `geo2rdr` is far more expensive per point than three PROJ calls, which changes what is worth
@@ -461,9 +475,31 @@ caching. Whether `InterpolatedTransform` extends to the radar mapping is an open
 commitment: the mapping is smooth in the grid coordinates, so lattice interpolation should apply,
 but the accuracy budget is different because the result feeds an iteration.
 
-Measure first, in `benchmark/`, before adding anything.
+Measured first, and the answer was that nothing needed adding: `_run_block!` already took any
+`AbstractImageCoordinate` from CHUNK-006, so radar blocking worked the moment the driver dispatched.
+Verified bitwise at four block-size and task-count combinations, including sizes that do not divide the
+window.
 
-### CHUNK-010: extensions and documentation
+**The lattice is not worth it, by a wide margin.** `benchmark/radar_scale_perf.jl` measures where a
+radar point's 5.9 µs goes:
+
+| stage | ns | share |
+|---|---|---|
+| `geo2rdr` | 3078 | 58.6% |
+| range–Doppler solve | 1567 | 29.8% |
+| one PROJ call | 109 | 2.1% |
+
+Three PROJ calls are **6.3%** of a radar point against roughly 95% of a projected one. So
+`InterpolatedTransform` — which buys up to 6.9× there by removing PROJ — has almost nothing to take
+here. Interpolating the *solve* would mean interpolating the answer, which is a different and much
+riskier proposition than interpolating a coordinate transform.
+
+Threading is the lever instead: 2.91× on four threads, near-linear. And the absolute numbers make the
+question moot at production scale — an ITS_LIVE-sized tile (915×915 at 120 m) is **6 seconds** serial,
+a 5000×5000 grid **2.4 minutes**. The projected path needed the lattice because PROJ dominated it; the
+radar path does not because its own arithmetic does.
+
+### CHUNK-010: extensions and documentation — done
 
 `ImagePairGeometryRastersExt`: three-band off2vel writing on the radar path, two on the projected.
 
@@ -477,19 +513,45 @@ vertical offset as used in autoRIFT convention."* Azimuth increases along the tr
 The projected path's `+y`-down convention comes from the raster geometry itself and needs no
 negation. So the extension gets a method per coordinate type, not one shared path with a flag.
 
-`REFERENCE.md` gains a radar section: the quirks above, the exactness table extended with the radar
-cases, and the "Not yet implemented" section removed. `docs/src/index.md` and `README.md` drop the
-"radar path is not implemented" statements.
+`REFERENCE.md`'s radar section landed with the chunks that measured it, so this chunk only removed the
+last of the "not implemented" language from `README.md`, `docs/src/index.md` and `docs/src/radar.md`, and
+added a *The two paths* section to the README stating what each costs.
+
+The Rasters three-band writing landed in CHUNK-006, so what remained here was the AutoRIFT sign, and it
+turned out to be a gap rather than a rename: `pointset` supplied `dy_prior` **unnegated on both paths**,
+with the negation documented as the caller's job. That is the silent-failure shape — a wrong sign sends
+the correlator the wrong way and returns a plausible velocity — so `coordinate` is now a required
+keyword on both `pointset` and `velocity_conversion`, dispatching through `_prior_sign`, and passing
+nothing throws with the reason. `velocity_conversion` also returns `dy_sign` for the displacement coming
+back, the counterpart at `testautoRIFT.py:790-791`.
+
+The extension is exercised only when AutoRIFT is resolvable, which CI does not do. Verified locally in a
+temporary environment with both packages developed: all AutoRIFT tests pass, including a new one that
+asserts the throw and the projected sign.
 
 ## Open questions
 
-- Does Tier A survive on the radar path? The margin is now known — 1.9e-9 m of ground position
-  against a 2.33 m range sample — so the question is whether any fixture point sits within 1e-9 of a
-  `std::round` boundary. CHUNK-008 measures.
+- **What is the compiled kernel's 0.0013-line azimuth offset?** Nine hypotheses eliminated with every
+  input verified bit-identical — see `REFERENCE.md`. It is the gap between the compiled kernel and any
+  external reproduction, not a transcription error: two independent reproductions agree with each other
+  to 4e-6 lines while both sit ~0.0013 from the kernel. Closing it would mean reproducing that
+  kernel's floating-point history through a 51-iteration loop, which may not be achievable from
+  outside. Until then the consequence is bounded: one index on under 2% of points, and 1.07e-4
+  relative on the two off2vel bands that divide by the along-track step.
 
-- Is a lattice-interpolated radar mapping worth its accuracy cost? CHUNK-009, after measurement.
+
 
 Resolved since the plan was written:
+
+- **A lattice-interpolated radar mapping is not worth it.** PROJ is 6.3% of a radar point against ~95%
+  of a projected one, so the trick that wins on the projected path has almost nothing to remove here.
+  Measured in `benchmark/radar_scale_perf.jl`; threading gives 2.91× on four threads instead.
+
+- **Tier A mostly survives, and the range index survives outright.** Range indices, chip sizes and the
+  stable-surface mask are bitwise on every case. The azimuth index and the search extent derived from
+  it are not, for the reason above — but the prediction that the 1.9e-9 m ellipsoid margin would be the
+  deciding factor was wrong by five orders of magnitude. The deciding factor is 2 cm, and it is not in
+  this port.
 
 - **`cross_check` does not approach its gate.** Measured at 40.2° minimum across the swath, against a
   `> 1.0` threshold — so the one-ULP `acos` difference between openlibm and the platform libm cannot

@@ -136,13 +136,13 @@ function pairgeometry(grid::MapGrid, pair::CoregisteredPair, inputs::GeometryInp
                       nodata::NoDataPolicy = nodata_from(nothing))
     tf = _resolve_transform(transform)
     coord = pair.coordinate
-    win = window === nothing ? grid_window(grid, footprint_bounds(tf.forward, coord)) : window
+    win = window === nothing ? grid_window(grid, footprint_bounds(tf, coord)) : window
 
     size(inputs.dem) == size(win) || throw(DimensionMismatch(
         "GeometryInputs arrays are $(size(inputs.dem)) but the window is $(size(win)); the " *
         "inputs must cover exactly the window being computed"))
 
-    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata)
+    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata, coord)
     _fill_geometry!(result, grid, coord, pair.dt, inputs, tf, params, nodata, win)
     return result
 end
@@ -173,7 +173,6 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     sp = spacing(coord)
 
     out = Int32(nd.output)
-    fout = nd.output
 
     # `win` gives grid indices; the input and output arrays are indexed by position within the
     # window. Both are walked together with `zip` rather than by linear index, so a view whose axes
@@ -253,7 +252,115 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::ProjectedCoordin
     end
 
     # Bands the inputs do not support stay at their sentinel; the reference writes no file for them.
-    has_slope || (fill!(r.scale_x, fout); fill!(r.scale_y, fout))
+    has_slope || (fill!(r.scale_x, nd.output); fill!(r.scale_y, nd.output))
+    return r
+end
+
+# The radar loop. A separate method rather than a branch inside the projected one: the two differ in
+# how the pixel index arrives, in which spacing each output divides by, and in one extra output band,
+# and threading three flags through one body would obscure all three.
+#
+# Reproduces `geogridRadar.cpp:1112-1230`, whose branch structure is the projected path's — the same
+# nesting of `dhdx`, then `vx` and `srx` within it — so this reads as its counterpart.
+function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::RadarCoordinate, dt::Float64,
+                         inp::GeometryInputs, tf::TransformPair, params::GeometryParams,
+                         nd::NoDataPolicy, win::CartesianIndices{2})
+    has_slope = inp.dhdx !== nothing
+    has_vel = inp.vx !== nothing
+    has_sr = inp.srx !== nothing
+    has_csmin = inp.csminx !== nothing
+    has_csmax = inp.csmaxx !== nothing
+    has_ssm = inp.ssm !== nothing
+
+    sr_scale = searchrange_scale(params.scaling, dt)
+
+    # Ground range and azimuth pixel size come from the geometry, not a geotransform
+    # (`geogridRadar.cpp:684-686`), but feed the chip-size conversion identically.
+    pix_x = chip_size_pixels(params.chip_size_0, xsize(coord))
+    pix_y = chip_size_pixels(params.chip_size_0, ysize(coord))
+
+    out = Int32(nd.output)
+
+    for (idx, k) in zip(win, eachindex(r.location_x, inp.dem))
+        i, j = idx.I
+        gx, gy = gridpoint_center(grid, i, j)
+        gz = Float64(inp.dem[k])
+
+        normal = has_slope ? surface_normal(inp.dhdx[k], inp.dhdy[k]) : NO_NORMAL
+        g, sp, _ = pointgeometry(tf, gx, gy, gz, coord, normal)
+
+        # Already rounded by the solve, so no `pixel_index` step — see `PointGeometry`.
+        rgind, azind = g.image_xy
+        inbounds(rgind, azind, coord) || continue
+
+        r.location_x[k] = cround32(rgind)
+        r.location_y[k] = cround32(azind)
+
+        if has_slope
+            if has_vel
+                vx = Float64(inp.vx[k])
+                if ismissingval(nd, vx)
+                    r.offset_x[k] = Int32(0)
+                    r.offset_y[k] = Int32(0)
+                else
+                    vel = close_slope_parallel(vx, Float64(inp.vy[k]), normal)
+                    # Physical step lengths here, not the nominal spacings: `:1150-1151` divides by
+                    # `norm(drpos)` and `norm(alt)`, which is what `pixel_offset` uses.
+                    ox, oy = pixel_offset(vel, g, dt)
+                    r.offset_x[k] = cround32(ox)
+                    r.offset_y[k] = cround32(oy)
+                end
+            end
+
+            if cross_check(g) > 1.0
+                o = offset_to_velocity(g, sp.operator, dt)
+                r.off2vx_dx[k] = o[1]
+                r.off2vx_dy[k] = o[2]
+                r.off2vy_dx[k] = o[3]
+                r.off2vy_dy[k] = o[4]
+            end
+
+            # Band 3 of each off2vel file, and the scale factors: unconditional within the slope
+            # branch, unlike the operator above (`:1186-1191`).
+            r.off2vx_dr[k] = axis_velocity(sp.operator[1], dt)
+            r.off2vy_dr[k] = axis_velocity(sp.operator[2], dt)
+
+            sfx, sfy = scale_factors(g, sp.operator)
+            r.scale_x[k] = sfx
+            r.scale_y[k] = sfy
+
+            if has_sr
+                s1x = scaled_searchrange(params.scaling, inp.srx[k], sr_scale)
+                s1y = scaled_searchrange(params.scaling, inp.sry[k], sr_scale)
+                if ismissingval(nd, s1x) || s1x == 0
+                    r.search_x[k] = Int32(0)
+                    r.search_y[k] = Int32(0)
+                else
+                    sr1 = close_slope_parallel(s1x, s1y, normal)
+                    sr2 = close_slope_parallel(-s1x, s1y, normal)
+                    # `sp.search`, not `sp.operator`: the reference divides the search extent by the
+                    # grid-coordinate along-track step and the operator by the ECEF one. See
+                    # `RadarSpacing`.
+                    sx, sy = search_pixels(sr1, sr2, g, sp.search, dt)
+                    r.search_x[k] = cround32(sx)
+                    r.search_y[k] = cround32(sy)
+                end
+            end
+        end
+
+        has_csmin && _chip_bound!(r.chip_min_x, r.chip_min_y, inp.csminx, inp.csminy, k,
+                                  params.chip_size_0, pix_x, pix_y, nd, out)
+        has_csmax && _chip_bound!(r.chip_max_x, r.chip_max_y, inp.csmaxx, inp.csmaxy, k,
+                                  params.chip_size_0, pix_x, pix_y, nd, out)
+
+        if has_ssm
+            m = Float64(inp.ssm[k])
+            r.stable_surface[k] = ismissingval(nd, m) ? out : ctrunc32(m)
+        end
+    end
+
+    # Without a slope raster the reference writes no scale-factor file, so the band stays sentinel.
+    has_slope || (fill!(r.scale_x, nd.output); fill!(r.scale_y, nd.output))
     return r
 end
 

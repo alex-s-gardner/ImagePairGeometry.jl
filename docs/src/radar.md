@@ -7,13 +7,18 @@ convert between ground and radar coordinates.
 
 ## Status
 
-The numerics are implemented and verified against isce3 — the same objects NASA JPL's
-`geogridRadar.cpp` links against. [`RadarCoordinate`](@ref) is constructible, and supplies a
-footprint and the ground pixel sizes.
+Complete and verified against the compiled reference. [`pairgeometry`](@ref) takes a radar pair and
+produces all nine outputs, checked over eight fixture cases covering both look sides, a grid larger
+than the swath, scattered input nodata, and each combination of inputs that gates an output band.
 
-What is not built yet is the per-point kernel: there is no radar method of `pointgeometry`, so
-[`pairgeometry`](@ref) cannot yet take a radar pair. `RADAR_PLAN.md` in the repository tracks the
-remaining work.
+The numerics beneath it are verified against isce3 — the same objects NASA JPL's `geogridRadar.cpp`
+links against.
+
+Two float bands agree to 1.07e-4 relative rather than bitwise: bands 2 and 3 of the off2vel files,
+which divide by the along-track step. `REFERENCE.md` records the nine hypotheses eliminated in
+attributing that to the compiled kernel rather than to this port — including that two independent
+reproductions of the reference's algorithm agree with each other to 4e-6 lines while both sit 0.0013
+from the kernel.
 
 ## Why this is transcribed rather than delegated
 

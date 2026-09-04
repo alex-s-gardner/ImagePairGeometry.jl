@@ -24,6 +24,7 @@ using ImagePairGeometry: PairGeometry, AbstractInputSource, GeometryInputs, REFE
                          nodata_from, NoDataPolicy
 using Rasters
 using Rasters: AbstractRaster
+import GeoInterface
 using DimensionalData
 using ArchGDAL
 using DiskArrays
@@ -332,18 +333,13 @@ function ImagePairGeometry.write_geotiffs(dir::AbstractString, g::PairGeometry)
         end
         Rasters.write(path, Rasters.Raster(cube, (xdim, ydim, Rasters.Band(1:length(bands)));
                                            missingval = T(g.nodata.output),
-                                           crs = _crs_of(g.crs)); force = true)
+                                           crs = GeoInterface.crs(g)); force = true)
         isfile(path) || error("write_geotiffs did not produce $path")
         push!(written, path)
     end
     return written
 end
 
-# The CRS as something Rasters accepts: an EPSG integer becomes a `GFT.EPSG`, anything already a
-# `GeoFormat` passes through, and `nothing` stays nothing.
-_crs_of(::Nothing) = nothing
-_crs_of(epsg::Integer) = GFT.EPSG(Int(epsg))
-_crs_of(crs::GFT.GeoFormat) = crs
 
 export RasterInputs
 

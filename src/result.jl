@@ -34,9 +34,14 @@ All arrays share the axes of the grid window the result was computed over.
 - `scale_x`, `scale_y`: ratio of true ground distance to nominal pixel spacing.
 
 # Metadata
-- `geotransform`, `crs`: georeferencing of the window.
+- `geotransform`, `crs`: georeferencing of the window. The CRS is a
+  `GeoFormatTypes.GeoFormat` or `nothing`, inherited from the grid; read it with
+  `GeoInterface.crs`.
 - `window`: the grid indices covered.
 - `nodata`: the policy the sentinels come from.
+- `coordinate`: the [`AbstractImageCoordinate`](@ref) the geometry was computed for. Carried as a type
+  parameter so consumers that differ between the two paths — the output band layout, the sign of the
+  correlator's y prior — dispatch on it rather than inferring or being told.
 
 Field names map to the reference's files as `location` → `window_location.tif`, `offset` →
 `window_offset.tif`, `search` → `window_search_range.tif`, `chip_min`/`chip_max` →
@@ -44,7 +49,8 @@ Field names map to the reference's files as `location` → `window_location.tif`
 `window_stable_surface_mask.tif`, `off2vx`/`off2vy` → `window_rdr_off2vel_x_vec.tif`/`_y_vec.tif`,
 `scale` → `window_scale_factor.tif`.
 """
-struct PairGeometry{I<:AbstractMatrix{Int32},F<:AbstractMatrix{Float64},C}
+struct PairGeometry{I<:AbstractMatrix{Int32},F<:AbstractMatrix{Float64},C,
+                    K<:AbstractImageCoordinate}
     location_x::I
     location_y::I
     offset_x::I
@@ -70,6 +76,7 @@ struct PairGeometry{I<:AbstractMatrix{Int32},F<:AbstractMatrix{Float64},C}
     crs::C
     window::CartesianIndices{2}
     nodata::NoDataPolicy
+    coordinate::K
 end
 
 """
@@ -150,27 +157,24 @@ reference_files(::RadarCoordinate) = RADAR_REFERENCE_FILES
 """
     reference_files(g::PairGeometry) -> Tuple
 
-The layout for a result, chosen by whether its radar-only bands were written.
+The layout for a result, from the coordinate system it was computed for.
 
-A `PairGeometry` does not carry the coordinate system that produced it — it is a set of arrays plus
-georeferencing — so the discriminator is `off2vx_dr`: all-sentinel means the projected path, since
-only the radar kernel fills it.
-
-This is how [`write_geotiffs`](@ref) picks a band count without being told which path it is on. The
-consequence of getting it wrong is silent: a reader built against the reference's projected output
-indexes bands positionally, so an extra band shifts everything after it.
+This is how [`write_geotiffs`](@ref) picks a band count. Getting it wrong is silent — a reader built
+against the reference's projected output indexes bands positionally, so an extra band shifts
+everything after it — which is why the result carries its coordinate rather than the layout being
+inferred from the bands. Inferring it from whether `off2vx_dr` is all-sentinel misclassifies a radar
+result computed without a slope raster, since the whole slope branch that fills that band is skipped.
 """
-function reference_files(g::PairGeometry)
-    sentinel = g.nodata.output
-    return all(==(sentinel), g.off2vx_dr) ? REFERENCE_FILES : RADAR_REFERENCE_FILES
-end
+reference_files(g::PairGeometry) = reference_files(g.coordinate)
+
+GeoInterface.crs(r::PairGeometry) = r.crs
 
 Base.size(r::PairGeometry) = size(r.location_x)
 Base.axes(r::PairGeometry) = axes(r.location_x)
 Base.eachindex(r::PairGeometry) = eachindex(r.location_x)
 
 """
-    allocate_geometry(window, geotransform, crs, nodata) -> PairGeometry
+    allocate_geometry(window, geotransform, crs, nodata, coordinate) -> PairGeometry
 
 A [`PairGeometry`](@ref) sized to `window`, with every band filled with its sentinel.
 
@@ -179,14 +183,14 @@ case — is uniformly nodata rather than uninitialized, and a point skipped for 
 needs no explicit write.
 """
 function allocate_geometry(window::CartesianIndices{2}, geotransform::NTuple{6,Float64},
-                           crs, nodata::NoDataPolicy)
+                           crs, nodata::NoDataPolicy, coordinate::AbstractImageCoordinate)
     sz = size(window)
     # `Val` so the tuple lengths are compile-time constants. With a plain `length(INT_BANDS)` the
     # result is `Tuple{Vararg{Matrix{Int32}}}`, of unknown length, and splatting that into the
     # constructor becomes a call `juliac --trim` cannot resolve.
     ints = ntuple(_ -> fill(Int32(nodata.output), sz), Val(length(INT_BANDS)))
     floats = ntuple(_ -> fill(nodata.output, sz), Val(length(FLOAT_BANDS)))
-    return PairGeometry(ints..., floats..., geotransform, crs, window, nodata)
+    return PairGeometry(ints..., floats..., geotransform, crs, window, nodata, coordinate)
 end
 
 """

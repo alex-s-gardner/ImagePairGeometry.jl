@@ -28,6 +28,8 @@ module ImagePairGeometry
 
 using StaticArrays: SVector
 using Extents: Extent
+import GeoFormatTypes as GFT
+import GeoInterface
 
 export ImageFootprint, CoregisteredPair, coregister
 export ProjectedCoordinate, RadarCoordinate

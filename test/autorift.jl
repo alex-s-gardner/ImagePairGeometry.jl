@@ -31,9 +31,35 @@ function ar_case(; csminy = 360.0, ssm = 1.0)
     return r, grid, pair, win
 end
 
+@testset "the y prior's sign comes from the result's coordinate" begin
+    # The radar path negates the azimuth prior to reach AutoRIFT's north-up convention
+    # (`testautoRIFT.py:405-407`, under `optical_flag == 0`); the projected path does not. A wrong
+    # sign is silent — the correlator searches the wrong way and returns a plausible velocity — so the
+    # sign is read off the coordinate the result carries rather than being asked for or guessed.
+    r, _, pair, _ = ar_case()
+
+    # No keyword needed: the result knows which path produced it.
+    @test AutoRIFT.pointset(r; pixel_size = 30.0) isa AutoRIFT.PointSet{2}
+    @test r.coordinate === pair.coordinate
+
+    # Passing it explicitly agrees with the default.
+    proj = AutoRIFT.pointset(r; pixel_size = 30.0, coordinate = pair.coordinate)
+    @test proj.dy_prior == AutoRIFT.pointset(r; pixel_size = 30.0).dy_prior
+
+    # Something that is not a coordinate is still refused rather than silently signed.
+    @test_throws "must be a ProjectedCoordinate" AutoRIFT.pointset(r; pixel_size = 30.0,
+                                                                   coordinate = 42)
+
+    @test AR_EXT._prior_sign(pair.coordinate) === 1.0
+    @test velocity_conversion(r).dy_sign === 1.0
+    @test velocity_conversion(r; coordinate = pair.coordinate).dy_sign === 1.0
+    @test all(>=(0), filter(!iszero, proj.dy_prior)) ||
+          all(<=(0), filter(!iszero, proj.dy_prior))
+end
+
 @testset "pixel positions are one-based" begin
-    r, = ar_case()
-    pts = AutoRIFT.pointset(r; pixel_size = 30.0)
+    r, _, pair, _ = ar_case()
+    pts = AutoRIFT.pointset(r; coordinate = pair.coordinate, pixel_size = 30.0)
     @test pts isa AutoRIFT.PointSet{2}
     @test size(pts) == size(r)
 
@@ -49,8 +75,8 @@ end
 end
 
 @testset "invalid points are skipped, not searched" begin
-    r, = ar_case()
-    pts = AutoRIFT.pointset(r; pixel_size = 30.0)
+    r, _, pair, _ = ar_case()
+    pts = AutoRIFT.pointset(r; coordinate = pair.coordinate, pixel_size = 30.0)
     sentinel = Int32(-32767)
 
     invalid = findall(==(sentinel), r.location_x)
@@ -68,8 +94,8 @@ end
 end
 
 @testset "search radius and prior carry through" begin
-    r, = ar_case()
-    pts = AutoRIFT.pointset(r; pixel_size = 30.0)
+    r, _, pair, _ = ar_case()
+    pts = AutoRIFT.pointset(r; coordinate = pair.coordinate, pixel_size = 30.0)
     sentinel = Int32(-32767)
     valid = findall(!=(sentinel), r.location_x)
     @test all(k -> pts.radius_x[k] == r.search_x[k], valid)
@@ -79,15 +105,15 @@ end
 end
 
 @testset "chip size" begin
-    r, = ar_case()
+    r, _, pair, _ = ar_case()
 
     # From a pixel size, derived as the reference does.
-    pts = AutoRIFT.pointset(r; pixel_size = 30.0)
+    pts = AutoRIFT.pointset(r; coordinate = pair.coordinate, pixel_size = 30.0)
     @test all(==(chip_size_pixels(240.0, 30.0)), pts.chip_size_x)
     @test all(==(8), pts.chip_size_x)
 
     # Or given directly.
-    pts32 = AutoRIFT.pointset(r; chip_size = 32)
+    pts32 = AutoRIFT.pointset(r; coordinate = pair.coordinate, chip_size = 32)
     @test all(==(32), pts32.chip_size_x)
     @test all(==(32), pts32.chip_size_y)
 
@@ -106,8 +132,8 @@ end
 end
 
 @testset "velocity_conversion carries what PointSet cannot" begin
-    r, = ar_case()
-    c = velocity_conversion(r)
+    r, _, pair, _ = ar_case()
+    c = velocity_conversion(r; coordinate = pair.coordinate)
 
     @test c.off2vx.dx === r.off2vx_dx
     @test c.off2vx.dy === r.off2vx_dy
@@ -119,7 +145,8 @@ end
 
     # The chip aspect ratio the reference derives as `ScaleChipSizeY`.
     @test c.chip_scale_y == 1.5        # csminy 360 over csminx 240
-    @test velocity_conversion(ar_case(csminy = 240.0)[1]).chip_scale_y == 1.0
+    eq = ar_case(csminy = 240.0)
+    @test velocity_conversion(eq[1]; coordinate = eq[3].coordinate).chip_scale_y == 1.0
 
     # The mask is boolean, and false wherever the point is invalid.
     @test eltype(c.stable_surface) === Bool
@@ -128,15 +155,16 @@ end
     @test all(c.stable_surface[findall(!=(sentinel), r.location_x)])
 
     # A mask of zeros means nothing is stable, not that the band is missing.
-    @test !any(velocity_conversion(ar_case(ssm = 0.0)[1]).stable_surface)
+    ns = ar_case(ssm = 0.0)
+    @test !any(velocity_conversion(ns[1]; coordinate = ns[3].coordinate).stable_surface)
 end
 
 @testset "velocity reconstruction round-trips" begin
     # The whole point of the handoff: a displacement the correlator would report, converted back to
     # the map velocity that produced it. `dy` is negated because `PairGeometry.offset_y` is in image
     # axes where +y points south, while the operator expects AutoRIFT's convention.
-    r, = ar_case()
-    c = velocity_conversion(r)
+    r, _, pair, _ = ar_case()
+    c = velocity_conversion(r; coordinate = pair.coordinate)
     sentinel = Int32(-32767)
     k = first(findall(!=(sentinel), r.location_x))
 
@@ -177,8 +205,8 @@ end
     blocked = pairgeometry_blocked(grid, pair, InMemoryInputs(inputs, win);
                                    transform = IdentityTransform(), window = win,
                                    blocksize = (16, 16), nodata = nodata_from(-32767.0))
-    a = AutoRIFT.pointset(r; pixel_size = 30.0)
-    b = AutoRIFT.pointset(blocked; pixel_size = 30.0)
+    a = AutoRIFT.pointset(r; coordinate = pair.coordinate, pixel_size = 30.0)
+    b = AutoRIFT.pointset(blocked; coordinate = pair.coordinate, pixel_size = 30.0)
     for f in (:x, :y, :radius_x, :radius_y, :dx_prior, :dy_prior, :chip_size_x, :chip_size_y,
               :chip_size_min_x, :chip_size_max_x)
         @test getfield(a, f) == getfield(b, f)

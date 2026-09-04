@@ -257,6 +257,50 @@ its reference site uses. Passing one where the other belongs shifts the operator
 extent, which is exactly the kind of error a whole-band comparison catches and a per-point check does
 not.
 
+### The azimuth index carries a residual no external reproduction escapes
+
+The range index is bitwise on every fixture case. The azimuth index is not: it differs by exactly one
+on a handful of points per band — 1 to 4 out of roughly a thousand — and every such point sits within
+0.0013 azimuth lines of a `std::round` boundary.
+
+The cause is a systematic offset of about **0.0013 lines (2.7e-6 s, 2 cm along track)** between the
+compiled kernel's azimuth time and any reimplementation of its algorithm. Two independent
+reproductions bracket it: a Python one written from the same source lands at -0.00149 lines, this
+package at -0.00131, and the two agree with each other to **4e-6 lines**. So the residual is not a
+transcription error — it is the gap between the compiled kernel and an external reproduction.
+
+Every input to the solve has been verified bit-identical, which is what localizes it:
+
+| checked | result |
+|---|---|
+| the coordinate transform | Proj.jl returns bitwise the same lon/lat as `OGRCoordinateTransformation`, both axis orders |
+| state vectors and their times | exact through the EOF text: `repr` → `stod` is the identity, and microsecond stamps are exact at 10 s spacing |
+| the orbit reference epoch | `setStateVectors` rebases to the first state vector, so both sides hold 0–600 s |
+| the stale `rngpix` | no effect; a freshly computed range gives the same result |
+| the height fed to the range-Doppler solve | `demLine[jj]` as implemented; zero instead is 53× worse |
+| Hermite velocity contraction | its 4e-14 perturbs the Newton root by 3.5e-11 s — eight orders below what is observed |
+| the `tlined` epoch magnitude | seconds since 1970 costs ~11 ULP over 51 iterations, the right order, but reproducing it moves the residual only from -0.0014860 to -0.0014777 lines: 0.6% of the effect |
+| the one-pulse `tline`/`tlined` offset | removing it makes agreement far worse — 4 points matching instead of 953 |
+
+Range and azimuth come from the same solve, and the range is bitwise, so the solve converges
+correctly and the residual is confined to converting that time to an index.
+
+Not reproduced, because it is not reproducible from outside: it is a property of the compiled
+kernel's own floating-point history through a 51-iteration loop. The consequence is bounded and
+stated rather than hidden — one index, on under 2% of points, in the azimuth index and the search
+extent derived from it.
+
+### The off2vel denominators inherit that residual
+
+Bands 2 and 3 of both off2vel files divide by `norm(da)`, the along-track step over one pulse
+(`geogridRadar.cpp:1166-1176`, `:1187`). That step is measured between two solved ground points, so it
+inherits the azimuth residual: `da` agrees to 4.5e-5 mean and 1.07e-4 maximum relative.
+
+The attribution is exact rather than inferred. Band 3 is `norm(da) / dt * yr` and nothing else, so
+inverting it recovers the reference's own `da` — whose error against this package's matches the band
+error to five digits, 1.06804e-4. Every other float band, and the band 1 columns that divide by `dr`,
+agree far more tightly.
+
 ### The footprint is solved for, not transformed
 
 `GeogridOptical.determineBbox` transforms four image corners. Its radar counterpart

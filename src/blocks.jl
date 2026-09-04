@@ -130,7 +130,7 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
     shared = (window === nothing || serial) ? _resolve_transform(transform) : nothing
     win = window === nothing ? grid_window(grid, footprint_bounds(shared, coord)) : window
 
-    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata)
+    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata, coord)
     blocks = block_ranges(win, blocksize)
     n = ntasks === nothing ? min(length(blocks), Threads.nthreads()) : ntasks
 
@@ -165,7 +165,10 @@ end
 
 # Split out so the block loop specializes on the concrete source and transform types, and so each
 # task's writes land in a function whose locals cannot be captured across tasks.
-function _run_block!(result::PairGeometry, grid::MapGrid, coord::ProjectedCoordinate, dt::Float64,
+#
+# Coordinate-agnostic: it only forwards to `_fill_geometry!`, which dispatches. Blocking a radar run
+# is the same operation for the same reason — every point is independent of every other.
+function _run_block!(result::PairGeometry, grid::MapGrid, coord::AbstractImageCoordinate, dt::Float64,
                      source::AbstractInputSource, tf::TransformPair, params::GeometryParams,
                      nodata::NoDataPolicy, block::CartesianIndices{2}, win::CartesianIndices{2})
     inputs = readblock(source, block)
@@ -181,5 +184,6 @@ end
 function _block_view(r::PairGeometry, local_block::CartesianIndices{2})
     ints = ntuple(i -> view(getfield(r, INT_BANDS[i]), local_block), length(INT_BANDS))
     floats = ntuple(i -> view(getfield(r, FLOAT_BANDS[i]), local_block), length(FLOAT_BANDS))
-    return PairGeometry(ints..., floats..., r.geotransform, r.crs, local_block, r.nodata)
+    return PairGeometry(ints..., floats..., r.geotransform, r.crs, local_block, r.nodata,
+                        r.coordinate)
 end
