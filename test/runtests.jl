@@ -4,9 +4,11 @@ using Aqua
 
 include("npz.jl")
 
-# `AutoRIFT` is not registered, so the test environment cannot depend on it and CI cannot load it.
-# The handoff test runs when it is resolvable in the active environment — add it with
-# `Pkg.develop(path = "…/AutoRIFT.jl")` in `test/` to exercise the extension locally.
+# `AutoRIFT` is not registered, so the test environment cannot name it in `[deps]`. The handoff test
+# runs whenever it is resolvable in the active environment, which CI arranges by adding it from its
+# repository on Julia 1.11 and later; to exercise the extension locally, do the same:
+#
+#     julia --project=test -e 'import Pkg; Pkg.add(url = "https://github.com/alex-s-gardner/AutoRIFT.jl")'
 const HAVE_AUTORIFT = Base.identify_package("AutoRIFT") !== nothing
 
 @testset verbose=true "ImagePairGeometry.jl" begin
