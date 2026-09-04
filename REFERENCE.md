@@ -318,18 +318,20 @@ reports `(lat, lon)` limits where a projected one reports `(x, y)`. Not reproduc
 takes a transform rather than an EPSG code, so the caller's transform already fixes the axis
 convention, and re-deriving it from a code the function never sees would be guesswork.
 
-### Why the radar numerics are transcribed rather than delegated
+### Why the radar numerics are implemented here rather than delegated
 
-The reference sets `a = 6378137.0` and `e2 = 0.0066943799901` (`geogridRadar.cpp:324-325`) — the
-latter a truncation of WGS84's `6.69437999014e-3` at eight significant digits — and converts ECEF to
-geodetic by Vermeille's 2002 closed form. A geodesy library uses the full-precision datum and a
-different formulation, so it agrees to about 1e-9 and not to the bit. The radar path's integer
-outputs are `std::round` of quantities computed through these conversions, so the last bits decide a
-range index sitting near a `.5` boundary.
+ECEF to geodetic has no closed form. This is Vermeille's 2002 solution, as isce3 uses
+(`Ellipsoid.h:210-238`), on WGS84's `e2` at full precision — `6.69437999014e-3`, where isce3
+truncates to `0.0066943799901` at eight significant digits (`geogridRadar.cpp:324-325`).
 
-Geodesy.jl is in the test environment for the opposite purpose: as an independent implementation to
-check the transcription against at 1e-9. A fixture generated from isce3 cannot distinguish a correct
-transcription from a faithful transcription of a misreading; a second, unrelated formulation can.
+Delegating the inverse is not an option at the altitudes this package works at. PROJ's
+EPSG:4978-to-EPSG:4979 pipeline returns a height 4.0e-3 m out and a latitude 1.9e-8° out at 700 km,
+where Vermeille's form recovers an exactly-computed ECEF position to 1.8e-9 m. PROJ is accurate below
+the troposphere and is the reference there; above it, it is the less accurate of the two.
+
+Geodesy.jl is in the test environment as an independent implementation to check against at 1e-9. A
+fixture generated from isce3 cannot distinguish a correct implementation from a faithful
+transcription of a misreading; a second, unrelated formulation can.
 
 ### Radar numerics agreement
 
@@ -337,16 +339,31 @@ Bitwise where it is achievable, and bounded in meters where it is not. Each boun
 identified cause and is asserted in `test/radar_numerics.jl`, with the observed maximum reported on
 every run.
 
+The ellipsoid conversions are checked against PROJ and against an exact round trip, with the fixture
+as a secondary check at 1e-6 m — the size of the datum difference. On isce3's own `e2` both
+conversions are bitwise against the fixture, which is what establishes that the arithmetic is
+identical and only the constant differs.
+
 | quantity | agreement | cause where not bitwise |
 |---|---|---|
-| `lonlat_to_xyz` | **bitwise**, all cases | — |
-| `xyz_to_lonlat` height | **bitwise**, all cases | — |
-| `xyz_to_lonlat` angles | ≤ 1 ULP | `atan2`: openlibm vs the platform libm |
+| `lonlat_to_xyz` vs PROJ | **5.7e-9 m** | Vermeille vs PROJ's formulation |
+| `xyz_to_lonlat` round trip | **1.8e-9 m** in height, 1.9e-9 m on the ground | — |
+| `xyz_to_lonlat` vs PROJ, h ≤ 100 km | < 1e-6 m | PROJ's own inverse accuracy |
+| either conversion, on isce3's `e2` | **bitwise**, all cases | — |
+| either conversion, vs the fixture | 1.5e-7 m | `e2`: full precision vs isce3's truncation |
 | Hermite position | bitwise on 10 of 11 cases, else 1 ULP | contraction in isce3's accumulation |
 | Hermite velocity | 4e-14 relative | contraction, amplified by cancellation in `g0` |
-| `rdr2geo` | ≤ 7 ULP in angle, **1.9e-9 m on the ground** | the two above, propagated |
+| `rdr2geo` | **3.6e-8 m on the ground** | the datum, `atan2`, and the above, propagated |
 
-Two causes, both established by measurement rather than inferred.
+Every band of the `radar geogrid vs reference` fixture still matches — 172 integer assertions and
+46,854 float ones — so the datum difference moves no rounded index.
+
+Three causes, all established by measurement rather than inferred.
+
+*The datum constant differs from the fixture's.* `e2` at full precision against isce3's eight-digit
+truncation is 6e-12 relative, reaching a position as 1.5e-7 m — 6e-8 of a range sample. It dominates
+the ellipsoid comparisons against the fixture and `rdr2geo`'s ground bound, and moves no rounded
+index.
 
 *`atan2` is not the same function in both, and is not the same function across platforms.* Julia's
 `atan` is openlibm's; the reference's resolves to whatever libm its machine provides. They differ in
@@ -378,7 +395,7 @@ which disagrees with isce3 in exactly the same cases and directions and agrees w
 Inserting `fma` into the accumulation moves the worst ULP count from 80896 to 43911 without closing
 it, so the pattern is not one `fma` site and matching it would mean matching a compiler's choices.
 
-The bound that carries the weight is the last row: 1.9e-9 m of ground position, which is 8e-10 of a
+The bound that carries the weight is the last row: 3.6e-8 m of ground position, which is 1.5e-8 of a
 range sample. A ULP count is the wrong unit for a value whose inputs already differ in their last
 bits; where the result is spent is as a ground position feeding a range and azimuth index.
 

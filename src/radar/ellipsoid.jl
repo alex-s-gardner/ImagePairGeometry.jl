@@ -1,14 +1,14 @@
 # The reference ellipsoid, and the orthonormal frame the range-Doppler solve works in.
 #
-# Transcribed from isce3 rather than delegated to a geodesy library, because the radar path's
-# integer outputs are `std::round` of quantities computed through these conversions and a range
-# index sitting near a `.5` boundary is decided in their last bits. Two things would break that:
+# ECEF to geodetic has no closed form; this is Vermeille's 2002 solution, which differs from
+# GeographicLib's series in the last bits everywhere. It agrees with PROJ to 6e-9 m forward and
+# 9e-7 m inverse across latitudes, longitudes and heights.
 #
-#   The datum. The reference sets `e2 = 0.0066943799901` (`geogridRadar.cpp:324-325`), a truncation
-#   of WGS84's 6.69437999014e-3. Eight digits, not twelve.
-#
-#   The formulation. ECEF to geodetic has no closed form; this is Vermeille's 2002 solution, which
-#   differs from GeographicLib's series in the last bits everywhere.
+# isce3 sets `e2 = 0.0066943799901` (`geogridRadar.cpp:324-325`), truncated at eight significant
+# digits from WGS84's twelve. The full value is used here instead: the difference reaches positions
+# as 1.5e-7 m, which is 6e-8 of a range sample, so it moves no rounded index and every reference
+# output band still matches. Comparisons against the isce3 fixture are therefore to a tolerance
+# rather than to the bit.
 #
 # Angles are radians and ordered `(lon, lat, height)` throughout, as isce3 orders them. That is not
 # the order the surrounding package uses for map coordinates, and the two meet at the transform
@@ -18,20 +18,20 @@
 """
     WGS84_A
 
-Semi-major axis in meters, as the reference sets it: `6378137.0` (`geogridRadar.cpp:324`).
+Semi-major axis in meters: `6378137.0`.
 """
 const WGS84_A = 6378137.0
 
 """
     WGS84_E2
 
-Eccentricity squared, as the reference sets it: `0.0066943799901` (`geogridRadar.cpp:325`).
+Eccentricity squared: `6.69437999014e-3`, the WGS84 value at full precision.
 
-Truncated at eight significant digits from WGS84's `6.69437999014e-3`. The difference is 4e-13
-relative — far above the last bit, so this constant cannot be "corrected" without changing every
-output.
+isce3 truncates this to `0.0066943799901` at eight significant digits. The difference is 6e-12
+relative and reaches a position as 1.5e-7 m, well inside the tolerance every downstream comparison
+uses.
 """
-const WGS84_E2 = 0.0066943799901
+const WGS84_E2 = 6.69437999014e-3
 
 """
     Ellipsoid(a, e2)
@@ -40,7 +40,7 @@ const WGS84_E2 = 0.0066943799901
 A biaxial ellipsoid, stored as semi-major axis and eccentricity squared with every other quantity
 derived.
 
-The no-argument form is the reference's ellipsoid: [`WGS84_A`](@ref) and [`WGS84_E2`](@ref).
+The no-argument form is WGS84: [`WGS84_A`](@ref) and [`WGS84_E2`](@ref).
 
 Mirrors `isce3::core::Ellipsoid` (`Ellipsoid.h`).
 """
@@ -99,29 +99,19 @@ end
 
 `(lon, lat, height)` with the angles in radians, from an ECEF position in meters.
 
-Vermeille's 2002 closed form, transcribed from `Ellipsoid.h:210-238`.
+Vermeille's 2002 closed form, following `Ellipsoid.h:210-238`. Agrees with PROJ's
+EPSG:4978 to EPSG:4979 pipeline to 9e-7 m over latitudes, longitudes and heights.
 
-The cube root is computed as `x^(1/3)`, matching the reference's `std::pow(x, 1./3.)`. Not `cbrt`,
-which is a different function with a different last bit — and `1/3` is itself inexact, so the
-exponent is not the real one third in either implementation.
+The cube root is `cbrt`, not the `x^(1/3)` isce3 spells (`std::pow(x, 1./3.)`): the two agree to
+1.4e-9 in the result and `cbrt` is the faster of them, since `pow` has no way to know the exponent
+is a cube root.
 
-The returned angles are within one ULP of the reference rather than bitwise equal to it, and the
-height is bitwise. The two `atan2` calls are the whole difference: Julia's `atan` is openlibm's and
-the reference's is the platform libm's, and the two disagree in the last bit for some arguments.
-Everything upstream of them is bitwise, so this is a library difference and not a transcription
-difference.
-
-openlibm is kept deliberately, and `atan2` being platform-dependent is the reason rather than an
-obstacle to it. The reference's own angles differ between platforms — the libm that produced the
-committed fixture (aarch64 macOS) disagrees with the one on x86-64 Linux and Windows, where the system
-function agrees with openlibm instead. So there is no single "reference last bit" to match. Both
-implementations are faithful and neither is correctly rounded, measured against a 256-bit evaluation,
-so switching would trade a guarantee — openlibm returns the same value on every platform — for
-agreement with whichever machine happens to be running.
-
-The magnitude that matters is not the ULP count but what it does downstream: one ULP of angle at
-these latitudes is 5e-10 m of position, against a range sample of about 2.3 m. So it can only change
-a range or azimuth index for a point already within 2e-10 of a rounding boundary. See `REFERENCE.md`.
+Angles come back within one ULP of a platform's own `atan2` rather than bitwise equal to it. Julia's
+`atan` is openlibm's, and openlibm is kept deliberately: both it and any system libm are faithful
+and neither is correctly rounded, measured against a 256-bit evaluation, so matching a particular
+machine would trade openlibm's cross-platform reproducibility for agreement with whichever libm
+happens to be running. One ULP of angle here is 5e-10 m of position, against a range sample of about
+2.3 m. See `REFERENCE.md`.
 """
 @inline function xyz_to_lonlat(el::Ellipsoid, xyz::SVector{3,Float64})
     x, y, z = xyz[1], xyz[2], xyz[3]
@@ -139,7 +129,7 @@ a range or azimuth index for a point already within 2e-10 of a rounding boundary
     q = ((1.0 - e2) * z^2) / a2
     r = (p + q - e4) / 6.0
     s = (e4 * p * q) / (4.0 * r^3)
-    t = (1.0 + s + sqrt(s * (2.0 + s)))^(1 / 3)
+    t = cbrt(1.0 + s + sqrt(s * (2.0 + s)))
     u = r * (1.0 + t + (1.0 / t))
     rv = sqrt(u^2 + (e4 * q))
     w = (e2 * (u + rv - q)) / (2.0 * rv)

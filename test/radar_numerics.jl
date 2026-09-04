@@ -4,16 +4,19 @@
 # `isce3.geometry.rdr2geo` — the same objects `geogridRadar.cpp` links against — and records every
 # float as a hex literal so the comparison here is on bit patterns rather than on a decimal repr.
 #
-# All three are asserted bitwise. Unlike the projected path there is no PROJ in the way: these are
-# pure arithmetic on values both sides receive identically, so the two reasons the projected path's
-# floats cannot be bitwise under a reprojection (contraction, and PROJ's platform variance) do not
-# apply. Where a bitwise assertion fails it means the transcription is wrong, not that the tolerance
-# is too tight.
+# The orbit and rdr2geo cases are asserted bitwise: they are pure arithmetic on values both sides
+# receive identically, so the two reasons the projected path's floats cannot be bitwise under a
+# reprojection (contraction, and PROJ's platform variance) do not apply.
 #
-# Three independent checks, because a fixture alone cannot tell a correct transcription from a
+# The ellipsoid conversions are not, because this package uses WGS84's `e2` at full precision where
+# isce3 truncates it to eight digits. PROJ is the reference for those and the fixture a secondary
+# check, at the tolerance that difference implies — see `ELLIPSOID_FIXTURE_ATOL`.
+#
+# Four independent checks, because a fixture alone cannot tell a correct implementation from a
 # faithful transcription of a misreading:
 #
-#   the fixture         — bitwise against isce3
+#   PROJ                — the reference for the ellipsoid conversions
+#   the fixture         — bitwise for orbit and rdr2geo, to a tolerance for the ellipsoid
 #   Geodesy.jl          — an unrelated formulation, agreeing at 1e-9
 #   internal properties — round trips, orthonormality, and the analytic orbit
 
@@ -27,6 +30,7 @@ using ImagePairGeometry: Ellipsoid, WGS84_A, WGS84_E2, semiminor, r_east,
                          dot3, cross3, norm3, unitvec3
 using Geodesy: Geodesy, LLA, ECEF, wgs84
 using JSON3
+using Proj
 using StaticArrays: SVector
 using Test
 
@@ -40,52 +44,136 @@ fv(v) = SVector{3,Float64}(fx(v[1]), fx(v[2]), fx(v[3]))
 
 const EL = Ellipsoid()
 
+"""
+The isce3 truncation of `e2`, `0.0066943799901`, against which the fixture was generated.
+"""
+const ISCE3_E2 = 0.0066943799901
+
+"""
+How far a position computed on WGS84's `e2` may sit from the fixture's, which was computed on
+isce3's eight-digit truncation of it.
+
+The two constants differ by 6e-12 relative, which reaches an ECEF position as 1.5e-7 m. That is 6e-8
+of a range sample, so it moves no rounded index: every band of the `radar geogrid vs reference`
+fixture still matches. This is the size of the datum difference, not a tolerance on the
+implementation — PROJ is what pins that, to 6e-9 m forward.
+"""
+const ELLIPSOID_FIXTURE_ATOL = 1e-6
+
+# PROJ's own geographic-to-geocentric pipeline on full-precision WGS84: the reference for the
+# ellipsoid conversions. Takes degrees and (lon, lat, h), where the functions under test take
+# radians.
+const PROJ_LL_TO_XYZ = Proj.Transformation("EPSG:4979", "EPSG:4978"; always_xy = true)
+const PROJ_XYZ_TO_LL = Proj.Transformation("EPSG:4978", "EPSG:4979"; always_xy = true)
+
+proj_ll_to_xyz(llh) =
+    SVector{3,Float64}(PROJ_LL_TO_XYZ(rad2deg(llh[1]), rad2deg(llh[2]), llh[3])...)
+
+function proj_xyz_to_ll(xyz)
+    lon_d, lat_d, h = PROJ_XYZ_TO_LL(xyz[1], xyz[2], xyz[3])
+    SVector{3,Float64}(deg2rad(lon_d), deg2rad(lat_d), h)
+end
+
 @testset "provenance" begin
     p = RFIX.provenance
-    # The truncated e2 is the whole reason this is transcribed rather than delegated, so assert the
-    # fixture was generated against the same constant this package uses.
     @test fx(p.ellipsoid_a) === WGS84_A
-    @test fx(p.ellipsoid_e2) === WGS84_E2
+    # The fixture was generated on isce3's truncated `e2`, which is what makes every comparison
+    # against it below a tolerance rather than a bitwise one.
+    @test fx(p.ellipsoid_e2) === ISCE3_E2
     @info "radar numerics fixture provenance" isce3 = p.isce3_version numpy = p.numpy_version
 end
 
 @testset "ellipsoid constants" begin
     @test EL.a === WGS84_A
     @test EL.e2 === WGS84_E2
-    @test semiminor(EL) === fx(RFIX.ellipsoid.b)
-    # The reference's e2 is a truncation of the WGS84 value, not equal to it. If this ever passes,
-    # someone has "fixed" the constant and every radar output has moved.
-    @test WGS84_E2 != 6.69437999014e-3
-    @test WGS84_E2 < 6.69437999014e-3
+    @test WGS84_E2 === 6.69437999014e-3          # WGS84 at full precision, not isce3's truncation
+    @test WGS84_E2 > ISCE3_E2
+    # The truncation is small enough that the two ellipsoids share a semi-minor axis to well inside
+    # a nanometer, which is why no downstream band moves.
+    @test semiminor(EL) ≈ fx(RFIX.ellipsoid.b) atol = ELLIPSOID_FIXTURE_ATOL
 end
 
-@testset "lonlat_to_xyz is bitwise" begin
+@testset "lonlat_to_xyz agrees with PROJ" begin
+    # PROJ resolves EPSG:4979 to EPSG:4978 on full-precision WGS84, so this is the accuracy
+    # statement for the forward conversion; the fixture below is the secondary check.
+    worst = 0.0
     for c in RFIX.ellipsoid.cases
         llh = fv(c.llh)
-        @test lonlat_to_xyz(EL, llh) === fv(c.xyz)
+        worst = max(worst, norm3(lonlat_to_xyz(EL, llh) - proj_ll_to_xyz(llh)))
+    end
+    @test worst < 1e-8
+    @info "lonlat_to_xyz vs PROJ" meters = worst
+end
+
+@testset "lonlat_to_xyz is within the datum difference of isce3" begin
+    for c in RFIX.ellipsoid.cases
+        llh = fv(c.llh)
+        got = lonlat_to_xyz(EL, llh)
+        @test norm3(got - fv(c.xyz)) < ELLIPSOID_FIXTURE_ATOL
+        # ...and on isce3's own constant it is bitwise, which is what separates the datum from the
+        # arithmetic: every operation agrees exactly, only the constant differs.
+        @test lonlat_to_xyz(Ellipsoid(WGS84_A, ISCE3_E2), llh) === fv(c.xyz)
     end
 end
 
-@testset "xyz_to_lonlat height is bitwise, angles within one ULP" begin
-    # The angles are not bitwise, and the cause is `atan2` rather than the transcription: Julia's
-    # `atan` is openlibm's, the reference's is the platform libm's, and the two differ in the last
-    # bit for some arguments. Verified directly below by calling the system function.
+@testset "xyz_to_lonlat closes on its own input exactly" begin
+    # The accuracy statement for the inverse, and it is a round trip against an exact forward rather
+    # than a comparison with PROJ. PROJ's inverse loses accuracy with height: at the fixture's
+    # 700 km case it returns a height 4.0e-3 m out and a latitude 1.9e-8° out, where Vermeille's
+    # closed form recovers the input to 6e-10 m. So PROJ cannot be the reference at satellite
+    # altitude, and the strongest available check is that inverting an exactly-computed ECEF returns
+    # the coordinates it was computed from.
     #
-    # The height is bitwise on every case, which localizes the difference: it is computed from `k`,
-    # `d` and `z` with no inverse trigonometry, so everything upstream of the two `atan2` calls
-    # agrees exactly and only their results differ.
+    # `lonlat_to_xyz` is exact for this purpose, being bitwise against isce3 on isce3's own constant
+    # -- asserted below -- and within 6e-9 m of PROJ forward, where PROJ is accurate.
+    worst_h = 0.0
+    worst_ground = 0.0
+    for c in RFIX.ellipsoid.cases
+        llh = fv(c.llh)
+        back = xyz_to_lonlat(EL, lonlat_to_xyz(EL, llh))
+        worst_h = max(worst_h, abs(back[3] - llh[3]))
+        # Angles as a ground distance, which is the quantity that matters and is comparable across
+        # latitudes. A pole has no defined longitude, so comparing angles there would report a
+        # spurious disagreement; re-projecting both compares only what is determined.
+        worst_ground = max(worst_ground, norm3(lonlat_to_xyz(EL, back) - lonlat_to_xyz(EL, llh)))
+    end
+    @test worst_h < 1e-8
+    @test worst_ground < 1e-8
+    @info "xyz_to_lonlat round trip" height_meters = worst_h ground_meters = worst_ground
+end
+
+@testset "xyz_to_lonlat agrees with PROJ below satellite altitude" begin
+    # Where PROJ is accurate the two agree to 1e-6 m, which is the independent check on the inverse.
+    # Above the troposphere PROJ's own accuracy is the limit rather than this implementation's, so
+    # the comparison is confined to heights where that is not the case; the round trip above covers
+    # every case including the 700 km one.
+    worst = 0.0
+    for c in RFIX.ellipsoid.cases
+        llh_in = fv(c.llh)
+        llh_in[3] > 1e5 && continue
+        xyz = fv(c.xyz)
+        worst = max(worst,
+                    norm3(proj_ll_to_xyz(xyz_to_lonlat(EL, xyz)) -
+                          proj_ll_to_xyz(proj_xyz_to_ll(xyz))))
+    end
+    @test worst < 1e-6
+    @info "xyz_to_lonlat vs PROJ, h <= 100 km" meters = worst
+end
+
+@testset "xyz_to_lonlat is within the datum difference of isce3" begin
+    # The height carries the datum difference directly, with no inverse trigonometry in it; the
+    # angles carry it plus one ULP of `atan2`, so both are compared as a position.
     for c in RFIX.ellipsoid.cases
         xyz = fv(c.xyz)
         got = xyz_to_lonlat(EL, xyz)
         want = fv(c.llh_roundtrip)
 
-        @test got[3] === want[3]
+        @test got[3] ≈ want[3] atol = ELLIPSOID_FIXTURE_ATOL
+        @test norm3(lonlat_to_xyz(EL, got) - lonlat_to_xyz(EL, want)) < ELLIPSOID_FIXTURE_ATOL
 
-        # A pole has no defined longitude — x and y are both ~0 and `atan2` returns whatever their
-        # signs give — so longitude is not compared there.
-        at_pole = abs(rad2deg(want[2])) > 89.999
-        at_pole || @test abs(reinterpret(Int64, got[1]) - reinterpret(Int64, want[1])) <= 1
-        @test abs(reinterpret(Int64, got[2]) - reinterpret(Int64, want[2])) <= 1
+        # On isce3's constant the height is bitwise, localizing the difference to the datum: the
+        # height is computed from `k`, `d` and `z` alone, so every operation upstream agrees exactly.
+        @test xyz_to_lonlat(Ellipsoid(WGS84_A, ISCE3_E2), xyz)[3] === want[3]
     end
 end
 
@@ -134,20 +222,22 @@ end
     end
 end
 
-@testset "the difference is confined to atan2, not the transcription" begin
-    # What localizes the ULP without depending on any platform's libm. `xyz_to_lonlat` computes the
-    # height from `k`, `d` and `z` with no inverse trigonometry, and it is bitwise on every case and
-    # every platform — so every term upstream of the two `atan2` calls agrees exactly with the
-    # reference, and only their results differ. A transcription error would move the height too.
+@testset "the arithmetic is exact; only the datum constant differs" begin
+    # What separates the datum from the implementation without depending on any platform's libm. On
+    # isce3's own `e2` the height is bitwise on every case and every platform — it is computed from
+    # `k`, `d` and `z` with no inverse trigonometry — so every term upstream of the two `atan2` calls
+    # agrees exactly. An error in the arithmetic would move the height on that constant too.
+    el_isce = Ellipsoid(WGS84_A, ISCE3_E2)
     for c in RFIX.ellipsoid.cases
-        @test xyz_to_lonlat(EL, fv(c.xyz))[3] === fv(c.llh_roundtrip)[3]
+        @test xyz_to_lonlat(el_isce, fv(c.xyz))[3] === fv(c.llh_roundtrip)[3]
+        @test lonlat_to_xyz(el_isce, fv(c.llh)) === fv(c.xyz)
     end
 end
 
-@testset "the angle ULP is negligible in position" begin
-    # What the ULP costs where it is eventually spent. One ULP of angle re-projected to ECEF is
-    # sub-nanometer, against a range sample of about 2.3 m — so it can only move a range or azimuth
-    # index for a point already within 2e-10 of a rounding boundary.
+@testset "the datum difference is negligible in position" begin
+    # What the difference costs where it is eventually spent, against a range sample of about 2.3 m.
+    # It can only move a range or azimuth index for a point already this close to a rounding
+    # boundary, which is why every band of the geogrid fixture still matches.
     dr = fx(RFIX.radar.dr)
     worst = 0.0
     for c in RFIX.ellipsoid.cases
@@ -155,9 +245,9 @@ end
         got = xyz_to_lonlat(EL, fv(c.xyz))
         worst = max(worst, norm3(lonlat_to_xyz(EL, got) - lonlat_to_xyz(EL, want)))
     end
-    @test worst < 1e-8
-    @test worst / dr < 1e-9
-    @info "ellipsoid inverse: worst-case position difference from the atan2 ULP" meters = worst range_samples = worst / dr
+    @test worst < ELLIPSOID_FIXTURE_ATOL
+    @test worst / dr < 1e-6
+    @info "ellipsoid inverse: worst-case position difference from the fixture" meters = worst range_samples = worst / dr
 end
 
 @testset "round trip closes" begin
@@ -185,9 +275,9 @@ end
         ours = lonlat_to_xyz(EL, llh)
         theirs = ECEF(LLA(lat_d, lon_d, llh[3]), wgs84)
 
-        # Relative, on a magnitude of order the Earth's radius. The datum difference is 4e-13
-        # relative in e2, which reaches the position through `r_east` — so the floor here is set by
-        # the truncated constant, not by either implementation's accuracy.
+        # Relative, on a magnitude of order the Earth's radius. Both sides are on full-precision
+        # WGS84, so the floor here is each implementation's own accuracy rather than a datum
+        # difference: Geodesy.jl uses GeographicLib's series where this is Vermeille's closed form.
         scale = max(norm3(ours), 1.0)
         @test abs(ours[1] - theirs.x) / scale < 1e-9
         @test abs(ours[2] - theirs.y) / scale < 1e-9
@@ -396,15 +486,16 @@ end
     @test looksign(LookLeft) === 1.0
 end
 
-@testset "rdr2geo agrees with isce3 to nanometers on the ground" begin
-    # Not bitwise, and for reasons already established upstream rather than anything in this port:
-    # the ellipsoid inverse carries a 1-ULP `atan2` difference (openlibm versus the platform libm)
-    # and the Hermite velocity carries a 4e-14 contraction difference. This solve calls both,
-    # repeatedly, so a few ULP accumulate in the angles.
+@testset "rdr2geo agrees with isce3 to sub-micrometers on the ground" begin
+    # Not bitwise, for three reasons upstream of this solve rather than anything in it: the datum
+    # constant differs from the fixture's by 6e-12 relative, the ellipsoid inverse carries a 1-ULP
+    # `atan2` difference (openlibm versus the platform libm), and the Hermite velocity carries a
+    # 4e-14 contraction difference. This solve calls all three, repeatedly.
     #
     # The bound that matters is the one in meters. A ULP of longitude is not a unit anyone cares
     # about; where the result is spent is as a ground position feeding a range and azimuth index, so
-    # that is what is bounded here: under 1e-8 m, which is under 1e-9 of a range sample.
+    # that is what is bounded here — and it is dominated by the datum difference, so it sits at the
+    # same 1e-6 m as every other fixture comparison.
     worst_ulp = 0
     worst_ground = 0.0
     dr = fx(RFIX.radar.dr)
@@ -420,8 +511,8 @@ end
         ground = norm3(lonlat_to_xyz(EL, got) - lonlat_to_xyz(EL, want))
         worst_ground = max(worst_ground, ground)
 
-        @test ground < 1e-8
-        @test ground / dr < 1e-9
+        @test ground < ELLIPSOID_FIXTURE_ATOL
+        @test ground / dr < 1e-6
         # The height is what the DEM snap pins, so it tracks the requested value rather than
         # drifting with the angles. Relative, since a nanometer on 4000 m is below `eps`.
         @test got[3] ≈ want[3] rtol = 1e-12 atol = 1e-8
