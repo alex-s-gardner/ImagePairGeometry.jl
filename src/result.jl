@@ -169,6 +169,67 @@ reference_files(g::PairGeometry) = reference_files(g.coordinate)
 
 GeoInterface.crs(r::PairGeometry) = r.crs
 
+"""
+    velocity_conversion(g::PairGeometry; coordinate = g.coordinate) -> NamedTuple
+
+The parts of `g` that turn a measured pixel displacement into a map velocity.
+
+A correlator returns a displacement in pixels; these are the per-point quantities that convert it,
+gathered in one place so a caller need not know which fields of a [`PairGeometry`](@ref) participate.
+
+# Fields
+- `off2vx`, `off2vy`: the two-by-two operator, each as `(dx, dy)` coefficient arrays.
+- `scale`: the scale factors, as `(x, y)`.
+- `stable_surface`: the stable-surface mask, `true` where stable. Points that are missing or
+  outside the image are `false`.
+- `chip_scale_y`: median ratio of the y to the x chip-size bound, the aspect ratio the reference
+  derives as `ScaleChipSizeY` (`testautoRIFT.py:376`). `NaN` where no chip-size band is present.
+- `dy_sign`: the factor a measured y displacement needs before use. See below.
+- `nodata`: the sentinel marking a missing entry in the float arrays.
+
+Given a displacement `(dx, dy)` in pixels, in the convention where `+y` points north:
+
+```julia
+c = velocity_conversion(g)
+vx = c.off2vx.dx .* (dx .* c.scale.x) .+ c.off2vx.dy .* (dy .* c.scale.y)
+vy = c.off2vy.dx .* (dx .* c.scale.x) .+ c.off2vy.dy .* (dy .* c.scale.y)
+```
+
+`dy_sign` is [`y_displacement_sign`](@ref) of the coordinate system: the factor a measured y
+displacement needs before the expressions above, `-1.0` on the radar path and `+1.0` on the projected
+one. Applying it is the caller's step, since the caller is what holds the measurement, but the value
+is supplied here so it need not be re-derived.
+"""
+function velocity_conversion(g::PairGeometry; coordinate = g.coordinate)
+    sentinel = Int32(g.nodata.output)
+    valid = g.location_x .!= sentinel
+
+    stable = [(v && m != sentinel && m != 0) for (v, m) in zip(valid, g.stable_surface)]
+
+    # The reference takes this over points where both bounds are present (`testautoRIFT.py:376`).
+    ratios = Float64[]
+    for (a, b) in zip(g.chip_min_x, g.chip_min_y)
+        (a != sentinel && b != sentinel && a != 0) && push!(ratios, b / a)
+    end
+    chip_scale_y = isempty(ratios) ? NaN : _median(ratios)
+
+    return (off2vx = (dx = g.off2vx_dx, dy = g.off2vx_dy),
+            off2vy = (dx = g.off2vy_dx, dy = g.off2vy_dy),
+            scale = (x = g.scale_x, y = g.scale_y),
+            stable_surface = stable,
+            chip_scale_y = chip_scale_y,
+            dy_sign = y_displacement_sign(coordinate),
+            nodata = g.nodata.output)
+end
+
+# Sorted copy: `Statistics` is a standard library but not a declared dependency, and this is the
+# only call.
+function _median(v::Vector{Float64})
+    s = sort(v)
+    n = length(s)
+    return isodd(n) ? s[(n + 1) ÷ 2] : (s[n ÷ 2] + s[n ÷ 2 + 1]) / 2
+end
+
 Base.size(r::PairGeometry) = size(r.location_x)
 Base.axes(r::PairGeometry) = axes(r.location_x)
 Base.eachindex(r::PairGeometry) = eachindex(r.location_x)

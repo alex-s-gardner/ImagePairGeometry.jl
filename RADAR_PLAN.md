@@ -503,7 +503,7 @@ radar path does not because its own arithmetic does.
 
 `ImagePairGeometryRastersExt`: three-band off2vel writing on the radar path, two on the projected.
 
-`ImagePairGeometryAutoRIFTExt`: **the y-sign negation is radar-only, and dispatches.** Both sites are
+`velocity_conversion`: **the y-sign negation is radar-only, and dispatches.** Both sites are
 guarded on `optical_flag == 0` — `testautoRIFT.py:405-407` negates the prior it supplies to the
 correlator, `:790-791` negates the displacement it receives back — so this is not shared behavior that
 the projected path also performs. `:405`'s own comment gives the reason: *"convert azimuth offset to
@@ -511,23 +511,23 @@ vertical offset as used in autoRIFT convention."* Azimuth increases along the tr
 `Dy` points down a north-up raster.
 
 The projected path's `+y`-down convention comes from the raster geometry itself and needs no
-negation. So the extension gets a method per coordinate type, not one shared path with a flag.
+negation. So `_prior_sign` dispatches on the coordinate type rather than taking a flag.
 
 `REFERENCE.md`'s radar section landed with the chunks that measured it, so this chunk only removed the
 last of the "not implemented" language from `README.md`, `docs/src/index.md` and `docs/src/radar.md`, and
 added a *The two paths* section to the README stating what each costs.
 
-The Rasters three-band writing landed in CHUNK-006, so what remained here was the AutoRIFT sign, and it
-turned out to be a gap rather than a rename: `pointset` supplied `dy_prior` **unnegated on both paths**,
-with the negation documented as the caller's job. That is the silent-failure shape — a wrong sign sends
-the correlator the wrong way and returns a plausible velocity — so `coordinate` is now a required
-keyword on both `pointset` and `velocity_conversion`, dispatching through `_prior_sign`, and passing
-nothing throws with the reason. `velocity_conversion` also returns `dy_sign` for the displacement coming
-back, the counterpart at `testautoRIFT.py:790-791`.
+The Rasters three-band writing landed in CHUNK-006, so what remained here was the y sign, and it
+turned out to be a gap rather than a rename: `dy_prior` was supplied **unnegated on both paths**, with
+the negation documented as the caller's job and performed nowhere. That is the silent-failure shape — a
+wrong sign sends the correlator the wrong way and returns a plausible velocity — so the sign is read
+off the coordinate the result carries, through `_prior_sign`. `velocity_conversion` returns it as
+`dy_sign`, for the displacement coming back at `testautoRIFT.py:790-791`.
 
-The extension is exercised only when AutoRIFT is resolvable, which CI does not do. Verified locally in a
-temporary environment with both packages developed: all AutoRIFT tests pass, including a new one that
-asserts the throw and the projected sign.
+Building the correlator's search grid is the correlator's concern, so it lives in AutoRIFT as
+`AutoRIFTImagePairGeometryExt`: this package is the upstream geometry layer and holds no dependency on
+its consumer, in either direction. `velocity_conversion` stayed here — it reads `PairGeometry` fields
+and calls nothing from AutoRIFT.
 
 ## Open questions
 

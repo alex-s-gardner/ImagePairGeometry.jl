@@ -41,7 +41,8 @@ index in it.
 Subtypes: [`ProjectedCoordinate`](@ref), [`RadarCoordinate`](@ref).
 
 The interface a subtype provides: [`nsamples`](@ref) and [`nlines`](@ref) for the image size,
-[`xsize`](@ref) and [`ysize`](@ref) for the ground pixel size along each axis, and a
+[`xsize`](@ref) and [`ysize`](@ref) for the ground pixel size along each axis,
+[`y_displacement_sign`](@ref) for how its second axis relates to north, and a
 [`footprint_bounds`](@ref) method. That is what [`CoregisteredPair`](@ref) and the chip-size
 conversion consume, and it is deliberately small: the two coordinate systems have almost nothing in
 common structurally — one is an origin, a spacing and a size, the other a range axis, a time axis and
@@ -152,3 +153,33 @@ The two components of the coordinate's `size`.
 """
 nsamples(c::ProjectedCoordinate) = c.size[1]
 nlines(c::ProjectedCoordinate) = c.size[2]
+
+"""
+    y_displacement_sign(c::AbstractImageCoordinate) -> Float64
+
+The factor relating a y displacement along `c`'s second image axis to one pointing north:
+`-1.0` where they oppose, `+1.0` where they agree.
+
+Part of the [`AbstractImageCoordinate`](@ref) interface, and needed at both ends of a correlation — on
+the prior handed to the correlator and on the displacement it returns. The reference applies it at
+`testautoRIFT.py:405-407` and `:790-791`, both guarded on `optical_flag == 0`.
+
+A property of the coordinate system rather than a choice, so it dispatches instead of taking a flag: a
+wrong sign describes motion in the opposite direction and stays entirely plausible, which is why this
+is answered here once rather than at each call site.
+"""
+function y_displacement_sign end
+
+# Named rather than a `MethodError`: the argument is usually a caller's own override of a default, and
+# the sign is the one clause of the handoff whose failure is silent, so the message says what was
+# expected.
+y_displacement_sign(x) = throw(ArgumentError(
+    "expected a ProjectedCoordinate or a RadarCoordinate, got $(typeof(x))"))
+
+"""
+    y_displacement_sign(c::ProjectedCoordinate)
+
+`+1.0`. A north-up raster's `+y` already points down its own second axis, so a displacement in image
+axes needs no adjustment.
+"""
+y_displacement_sign(::ProjectedCoordinate) = 1.0

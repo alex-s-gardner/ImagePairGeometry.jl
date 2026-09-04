@@ -32,7 +32,7 @@ import GeoFormatTypes as GFT
 import GeoInterface
 
 export ImageFootprint, CoregisteredPair, coregister
-export ProjectedCoordinate, RadarCoordinate
+export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
 # because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
@@ -40,8 +40,9 @@ export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
 export MapGrid, footprint_bounds, grid_window
 export IdentityTransform, AffineTransform, TransformPair, transform_pair
 export NoDataPolicy, nodata_from
+export chip_size_pixels
 export PairGeometry, GeometryInputs, GeometryParams, SearchRangeScaling
-export pairgeometry, pairgeometry_blocked, npoints, nvalid
+export pairgeometry, pairgeometry_blocked, npoints, nvalid, velocity_conversion
 export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
 export InterpolatedTransform, CoordLattice, build_lattice, latticesize

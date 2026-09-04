@@ -39,8 +39,8 @@ Reproduces no transform beyond the nodes themselves, so it is not a candidate fo
 exists to bound an error budget from below: comparing it against [`Bilinear`](@ref) at the same
 spacing separates the error the lattice's coarseness carries from the error the interpolation adds.
 
-Named for the node rather than as `Nearest` because `AutoRIFT.Nearest` is a distinct resampling
-method for displacement fields, and both are in scope wherever the `AutoRIFT` extension is loaded.
+Named for the node rather than as `Nearest` to leave that name free: `AutoRIFT.Nearest` is a distinct
+resampling method for displacement fields, and a caller using both packages has both in scope.
 """
 struct NearestNode <: LatticeInterpolation end
 
