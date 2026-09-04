@@ -51,6 +51,12 @@ jobs:
       # registered package there — and `buildpkg` cannot resolve it. Adding it by URL here is what
       # lets the handoff tests run rather than be skipped; without it the extension is never loaded.
       #
+      # No `Pkg.develop(path = ".")` here, and no `ImagePairGeometry` in `test/Project.toml`:
+      # `Pkg.test` puts the package under test on the path itself. Naming it in the test project makes
+      # this `Pkg.add` demand that it be registered, and developing it in to satisfy that writes a
+      # `[deps]` entry Julia 1.10 then refuses to merge with the parent project ("can not merge
+      # projects"). 1.11 and later tolerate the merge, which is why this passed there and not on 1.10.
+      #
       # `realdata-test` rather than `main`: the extension passes `chip_size_min_x`/`chip_size_max_x`
       # to `AutoRIFT.pointset`, which exists on that branch and not yet on main. Move this to `main`
       # once the branch merges there.
@@ -58,7 +64,6 @@ jobs:
         run: |
           julia --project=test -e '
             import Pkg
-            Pkg.develop(path = ".")
             Pkg.add(url = "https://github.com/alex-s-gardner/AutoRIFT.jl", rev = "realdata-test")'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
