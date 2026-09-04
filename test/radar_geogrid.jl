@@ -105,7 +105,11 @@ refband(name, file, band) = GARR["$name/$file/band$band"]
     p = GFIX.provenance
     @test p.proj_version == "9.8.1"
     @test p.nodata_out == -32767
-    @test gx(p.ellipsoid_e2) === ImagePairGeometry.WGS84_E2
+    # The fixture was generated on isce3's eight-digit truncation of `e2`; this package uses the full
+    # WGS84 value. The difference reaches a position as 1.5e-7 m, which moves no rounded index, so
+    # every band below still matches.
+    @test gx(p.ellipsoid_e2) ≈ ImagePairGeometry.WGS84_E2 rtol = 1e-11
+    @test gx(p.ellipsoid_e2) !== ImagePairGeometry.WGS84_E2
     @info "radar geogrid fixture provenance" autorift = p.autorift_version isce3 = p.isce3_version proj = p.proj_version
 end
 
