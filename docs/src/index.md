@@ -216,24 +216,16 @@ Order = [:type, :function]
 
 ## Correlator handoff
 
-Available when [`AutoRIFT`](https://github.com/alex-s-gardner/AutoRIFT.jl) is loaded, which adds
-`AutoRIFT.pointset(::PairGeometry)` and `velocity_conversion(::PairGeometry)`. The first converts
-the search grid — reindexing to one-based, and turning a nodata point into the zero search radius
-AutoRIFT skips on. The second returns what a `PointSet` has no fields for and downstream velocity
-conversion still needs: the displacement-to-velocity operator, the scale factors, the mask, and the
-chip-size aspect ratio.
+[`velocity_conversion`](@ref) gathers the per-point quantities that turn a measured pixel
+displacement into a map velocity: the operator, the scale factors, the stable-surface mask, the
+chip-size aspect ratio, and [`y_displacement_sign`](@ref) — the factor a y displacement needs when the
+image's second axis opposes north, as a radar image's azimuth does.
 
-`AutoRIFT` is unregistered, so it is a weak dependency with no resolvable version and is absent from
-both the test and docs environments — these functions are neither exercised by CI nor documented
-below. Add a checkout to run them:
-
-```julia
-import Pkg
-Pkg.develop(path = "path/to/AutoRIFT.jl")   # in test/ to run the handoff tests
-```
-
-It must be a revision whose `pointset` accepts `chip_size_min_x`/`chip_size_max_x`; the per-point
-chip-size bounds have nowhere else to go, and no released version has them.
+Building the correlator's search grid is the correlator's own concern, so it lives there rather than
+here. [`AutoRIFT`](https://github.com/alex-s-gardner/AutoRIFT.jl) adds a
+`pointset(::PairGeometry)` method when both packages are loaded, which reindexes the grid to
+one-based and turns a nodata point into the zero search radius it skips on. This package has no
+dependency on it in either direction.
 
 ## Index
 

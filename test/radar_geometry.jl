@@ -214,6 +214,13 @@ end
     @test GEO2RDR_ITERATIONS == 51
 end
 
+@testset "the radar path negates a y displacement" begin
+    # `testautoRIFT.py:790-791`, under `optical_flag == 0`: azimuth increases along the track while a
+    # north-up raster's +y points down, so the two conventions disagree in sign. A projected image
+    # needs no negation, and applying one there would invert its velocities.
+    @test y_displacement_sign(RC) === -1.0
+end
+
 @testset "type stable and non-allocating" begin
     gx, gy, gz = utm_point(305.0, SR + 4000 * DR)
     @test @inferred(pointgeometry(UTM, gx, gy, gz, RC, NORMAL)) isa

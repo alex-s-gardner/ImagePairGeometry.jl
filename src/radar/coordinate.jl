@@ -99,6 +99,14 @@ nsamples(c::RadarCoordinate) = c.nsamples
 nlines(c::RadarCoordinate) = c.nlines
 
 """
+    y_displacement_sign(c::RadarCoordinate)
+
+`-1.0`: azimuth increases along the track, while a north-up raster's `+y` points down, so the two
+conventions oppose.
+"""
+y_displacement_sign(::RadarCoordinate) = -1.0
+
+"""
     xsize(c::RadarCoordinate)
     ysize(c::RadarCoordinate)
 

@@ -172,15 +172,15 @@ raster, while the displacement-to-velocity operator expects `+y` pointing north.
 velocity to pixels and straight back through the operator returns `vy` with the sign flipped; I
 confirmed the reference's own arithmetic does the same, returning −240.66 m/yr for an input of +250.
 
-Reproduced as it is. A caller pairing this package with a correlator must apply the negation, which
-the `AutoRIFT` extension does in one clearly named place.
+Reproduced as it is. A caller pairing this package with a correlator must apply the negation;
+`velocity_conversion` supplies the factor as `dy_sign` so it need not be re-derived.
 
 The negation the reference performs outside geogrid — `testautoRIFT.py:405-407` on the prior it
 supplies, `:790-791` on the displacement it receives back — is **radar-only**: both sites are guarded
 on `optical_flag == 0`, and `:405`'s comment gives the reason, *"convert azimuth offset to vertical
 offset as used in autoRIFT convention."* Azimuth increases along the track while autoRIFT's `Dy`
 points down a north-up raster. The projected path's `+y`-down convention comes from the raster
-geometry itself and needs no negation, so the extension dispatches on the coordinate type rather than
+geometry itself and needs no negation, so `dy_sign` dispatches on the coordinate type rather than
 applying one shared rule.
 
 ### `cross_check` is 90° less the terrain slope angle
