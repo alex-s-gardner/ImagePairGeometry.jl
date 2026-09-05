@@ -47,6 +47,19 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      # FastGeoProjections' registered version predates the point-operator API this package is
+      # built on. Taken from `main` until a release carrying it is registered, in both the package
+      # and test environments, since `Pkg.test` resolves the latter separately. Remove both steps
+      # and let the `[compat]` bound resolve normally once that release exists.
+      - name: Use FastGeoProjections from main
+        shell: julia --color=yes {0}
+        run: |
+          import Pkg
+          url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"
+          Pkg.activate(".")
+          Pkg.add(url = url, rev = "main")
+          Pkg.activate("test")
+          Pkg.add(url = url, rev = "main")
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
@@ -68,6 +81,16 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v2
+      # As in the test job, and additionally in `docs`, which has its own environment.
+      - name: Use FastGeoProjections from main
+        shell: julia --color=yes {0}
+        run: |
+          import Pkg
+          url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"
+          for env in (".", "docs")
+              Pkg.activate(env)
+              Pkg.add(url = url, rev = "main")
+          end
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@v1
         env:
