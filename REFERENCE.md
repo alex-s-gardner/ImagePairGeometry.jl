@@ -33,9 +33,11 @@ committed, so the test suite runs with no Python, no network, and no large data.
 records the versions it was generated against; the tests assert the PROJ version, because
 projection formulae are stable but `proj_create_crs_to_crs`'s *operation selection* is not.
 
-`Proj.jl` here resolves to PROJ 9.8.1 as well, so the two sides agree on operation selection and on
-the projection formulae. They do not agree on the last bit: PROJ makes no bit-reproducibility
-promise across platforms, and does not deliver one — see Tier B below.
+The package itself depends on no projection library: `fast_transform` evaluates every transform with
+FastGeoProjections, natively. `Proj.jl` is a **test** dependency only, loaded so the fixtures can be
+asserted against the same PROJ 9.8.1 that generated them — the two sides then agree on operation
+selection and on the projection formulae. They do not agree on the last bit: PROJ makes no
+bit-reproducibility promise across platforms, and does not deliver one — see Tier B below.
 
 ## Exactness standard
 
@@ -127,6 +129,187 @@ The reference computes a zero- or negative-width overlap without comment and han
 The reference's exceptions are terse to the point of being unhelpful (`'Uppper bound of
 coregistered image index should be <= size of image1 (and image2) minus 1'`, including the typo).
 The messages here state which value violated which bound.
+
+### `fast_transform` defaults to xy axis order, not the reference's
+
+The reference builds its transforms with `osr.CoordinateTransformation` on SRSs from `ImportFromEPSG`,
+which is **authority** axis order — EPSG:4326 is then `(latitude, longitude)`. `fast_transform`
+defaults to `always_xy = true` instead.
+
+For every projected-to-projected pair the fixtures exercise the two are identical, so nothing asserted
+against the reference depends on the choice; the fixture comparisons hold either way, and
+`test/fastgeoprojections.jl` asserts that inertness directly.
+
+Where it decides something is a geographic CRS, and there the reference's order is a trap rather than a
+behavior worth reproducing. The radar path maps grid coordinates to geodetic degrees and reads the
+result as `(lon, lat, h)`; an authority-order transform hands it `(lat, lon, h)` and the geometry is
+wrong everywhere *with nothing raised* — `geo2rdr` converges against a target on the wrong side of the
+planet. A default that silently produces bad output is worse than one that diverges from the reference
+in a documented way, so the default is the order the kernel reads. `always_xy = false` reproduces
+authority order for a caller who wants it.
+
+### The zero-Doppler iteration count is 16, not 51
+
+`GEO2RDR_ITERATIONS` is 16 where `geogridRadar.cpp:949` runs 51. This and the range-Doppler count
+below are the two divergences that change how much arithmetic the radar path does rather than what it
+computes, and the only ones whose correctness depends on a property of the *input data* rather than of
+the code. This one is worth 1.6× of the whole per-point radar cost.
+
+**Why it is safe.** The iteration converges linearly at the rate above, so the count needed is
+`log(tol / guess_error) / log(r)`. From the reference's scene-center start, taking the far end of the
+scene as the worst grid point, the requirement measured against synthetic acquisitions spanning real
+mission geometry:
+
+| geometry | rate | iterations to reach 1e-9 s |
+|---|---|---|
+| 350 km (below any SAR orbit) | 0.053 | 9 |
+| TerraSAR-X, ICEYE, Capella (510–570 km) | 0.076–0.083 | 10 |
+| ALOS-2 (628 km) | 0.091 | 11 |
+| Sentinel-1 (693 km) | 0.100 | 11–12 |
+| NISAR (747 km) | 0.107 | 12 |
+| RADARSAT-2 (798 km) | 0.113 | 12 |
+| 1400 km (above any SAR orbit) | 0.186 | 15 |
+
+Worst over the realistic space is 12, so 16 carries four iterations of margin — a factor of 1e-3 in
+residual error at the worst realistic rate. Terrain height from sea level to 8000 m, incidence angle
+from 15° to 50°, look side, grid spacing and repeat interval each move the requirement by less than
+one iteration; orbit eccentricity lowers it.
+
+**What it costs.** Nothing measurable on the fixture. Every integer band of all eight cases of
+`radar geogrid vs reference` is bitwise identical to the 51-iteration result at any count of 10 or
+above, and the float bands agree to 1.6e-8 relative — two orders inside the 2e-4 bound that fixture
+already carries for other reasons. The full radar suite passes at 16 with no tolerance loosened.
+
+The binding constraint was not the fixture but `geo2rdr inverts rdr2geo` in
+`test/radar_numerics.jl`, which asserts `|Δt| < 1e-9 s` over 48 cases and needs 11. That test is
+roughly two orders tighter than anything the output bands check, which is why the fixture alone would
+have permitted a count as low as 6 — its ±1-index tolerance on azimuth bands absorbs the difference.
+
+**The assumption to check first if real data disagrees.** The bound is orbital altitude. Above roughly
+1000 km the requirement climbs past 16 and the constant must rise with it. `geo2rdr_iterations_needed`
+answers this for an orbit in hand without re-deriving anything: pass the satellite position at scene
+center, a target at the far swath edge, and half the scene length as `guess_error`, and compare the
+result against `GEO2RDR_ITERATIONS`.
+
+Two things the study did not cover, and that a surprise on real data would most likely come from.
+Every orbit tested was analytic — circular or Keplerian — so real state vectors' sampling noise and
+the Hermite interpolant's own error are unexercised; the rate depends on geometry rather than on
+interpolation accuracy, so this is expected not to matter, but it is an expectation and not a
+measurement. And the fixture's eight cases share one acquisition and one 622 km orbit, varying only
+the grid and look side, so the mission table above rests on synthetic geometry rather than on eight
+independent fixtures.
+
+### The range-Doppler iteration count is 6, not 10
+
+`RANGE_DOPPLER_ITERATIONS` is 6 where `geogridRadar.cpp:1038` runs 10. Same character as the
+zero-Doppler divergence above — fewer iterations, no convergence test, justified by a measured rate —
+but a *different* fixed point with a different governing parameter, so it was derived separately
+rather than by analogy.
+
+The iterate is `zsch`, the target's height above the sphere osculating the ellipsoid beneath the
+satellite. Perturbing it moves the target along the range circle, changing its latitude, which changes
+the geocentric radius of the constant-geodetic-height surface. So the rate is governed by
+
+    dr_t/dlat = -a f sin(2 lat)
+
+which vanishes at the equator and at the pole and peaks near 45°. It is also *small* — about 6e-4,
+where `geo2rdr`'s is 0.09 — so each iteration gains three digits and the solve reaches its floor
+quickly.
+
+**Latitude is the governing parameter here, not altitude.** That inverts the `geo2rdr` case, and it
+means the worst geometry is the 30–45° band: a polar ITS_LIVE grid and the near-equatorial fixture are
+both easier than the worst case, so neither would have exposed it.
+
+Measured over 1320 geometries — altitudes 400 to 1000 km, latitudes 0 to 80° on a near-polar orbit,
+incidence 15 to 55°, terrain height 0 and 4000 m, both look sides:
+
+| count | worst target displacement from the 30-iteration answer | as range samples |
+|---|---|---|
+| 3 | 1.8e-2 m | 7.6e-3 |
+| 4 | 7.7e-5 m | 3.3e-5 |
+| 5 | 3.3e-7 m | 1.4e-7 |
+| **6** | **7.8e-9 m** | **3.4e-9** |
+| 8 | 8.3e-9 m | 3.6e-9 |
+| 10 | 8.6e-9 m | 3.7e-9 |
+
+6 is where the iteration reaches its floor of about 1e-8 m — one ULP of `norm3` at Earth radius
+carried through the lon/lat round trip. Counts above 6 are not closer to the fixed point; they land on
+different noise. That is the substantive difference from the zero-Doppler case, where the extra
+iterations were merely wasted: here they cannot help even in principle.
+
+**The binding constraint** was again not the fixture. Every integer band of all eight cases is bitwise
+identical to the 10-iteration result at any count from 3 up, and the float bands agree to 2.5e-5
+relative at 3 — so the fixture alone would have permitted 3. What sets the requirement is the
+range-sphere property `test/radar_geometry.jl` asserts at `rtol = 1e-9`: over the same 1320 geometries
+a count of 3 violates it on 220 of them, while 4 clears it with a worst relative residual of 1.9e-11.
+Requirement 4, chosen 6, two iterations of margin.
+
+Terrain height moves the requirement by less than one iteration from the Dead Sea to Everest, and
+altitude by less than one over 400 to 1000 km. Both look sides were swept. As with the zero-Doppler
+count, every orbit tested was analytic, so real state vectors' sampling noise is unexercised.
+
+### `WarmStart` is available and off by default
+
+`GeometryParams(zero_doppler_start = WarmStart())` starts each zero-Doppler solve from the previous
+grid point's answer rather than from the scene midpoint, and runs 8 iterations instead of 16. Measured
+at 1.25× of the whole per-point radar cost.
+
+This is a divergence a caller opts into, not one the package takes: `SceneCenterStart()` is the
+default and reproduces `geogridRadar.cpp:906-911`, so every fixture assertion and every claim elsewhere
+in this document describes the default path.
+
+**What it costs.** The result becomes a function of the order points are visited in. A window computed
+whole and the same window computed as blocks no longer agree bitwise — the first point of each block
+has no predecessor and cold-starts. Measured on the `utm32n` fixture case at a 16×16 block size: every
+integer band is identical, and the float bands differ by at most 4.7e-7 relative, against the 2e-4
+those bands are held to versus isce3. So a blocked warm run is a valid product; it is not the *same*
+product to the bit. Per-block seeding does not recover the invariance, since a 1×1 block cold-starts
+by construction.
+
+**Why the minimum is 8 and not lower.** No rounded index moves at any count from 5 upward, so an
+integer-band check permits 5. The float bands do not: the off2vel bands divide by the along-track step
+and inherit the azimuth time's error with no rounding to absorb it. Against isce3 across all eight
+fixture cases:
+
+| `iterations` | integer bands | off2vel float bands | fixture gate (2e-4) |
+|---|---|---|---|
+| 5 | exact | 7.3e-4 | **fails** |
+| 6 | exact | 1.6e-4 | passes, little room |
+| **8** | **exact** | **1.07e-4** | **passes — the cold-start value** |
+| 10 | exact | 1.07e-4 | passes |
+
+At 8 the agreement is exactly the cold-start figure, meaning the warm start has stopped contributing
+error of its own. `WarmStart` rejects anything below it. That the integer bands would have permitted 5
+is worth recording: the fixture's integer tiers are the strictest thing in the suite for most changes,
+and this is a case where they are the *looser* check.
+
+**Grid spacing does not change the requirement.** The count depends on the gap between successive
+points, so a coarse or sparse grid is the case to worry about — but measured from 120 m to 10 km the
+float-band divergence at 8 iterations is flat at 3e-7 to 6e-7, and no integer band moves at any
+spacing. Even at 10 km the gap is 1.3 s of azimuth time against the roughly 60 s a cold start begins
+from, so the warm guess is still more than an order of magnitude better. A sparse pass computed for
+later interpolation onto a finer grid is therefore as safe as a dense one.
+
+### The range-Doppler loop converts forward once, not per iteration
+
+`geogridRadar.cpp:1053-1060` does a full ellipsoid round trip inside the loop: ECEF to geodetic,
+overwrite the height, geodetic back to ECEF, then take the norm. Only the norm is read by the next
+iteration — `targ_xyz` and `llhi` are read after the loop, not within it — and that norm does not
+depend on longitude, because the ellipsoid is a surface of revolution. So the intermediate iterations
+need the latitude alone:
+
+    N = a / sqrt(1 - e2 sin²φ)
+    |xyz|² = (N + h)² cos²φ + (N(1 - e2) + h)² sin²φ
+
+`_geocentric_radius` evaluates that, and the forward conversion runs once at the final iteration
+instead of six times. Worth about 1.03× of the per-point radar cost.
+
+Mathematically the same quantity; in floating point two expressions for it, rounding differently.
+Measured over 74185 latitude/longitude/height combinations: 2 ULP on WGS84 and on isce3's truncated
+`e2`, 3 ULP on a deliberately eccentric non-standard ellipsoid — 2.8e-9 m at Earth radius, which is the
+magnitude of this solve's own fixed-point floor and 1.3e-9 of a range sample. Every integer band of the
+eight-case fixture is unchanged, and the float bands' worst agreement against isce3 moves from
+1.0700e-4 to 1.0698e-4.
 
 ## Reproduced quirks
 
@@ -411,18 +594,30 @@ The bound that carries the weight is the last row: 3.6e-8 m of ground position, 
 range sample. A ULP count is the wrong unit for a value whose inputs already differ in their last
 bits; where the result is spent is as a ground position feeding a range and azimuth index.
 
-### `geo2rdr` converges linearly, so its iteration count is load-bearing
+### `geo2rdr` converges linearly, at a rate set by orbital altitude
 
 `geogridRadar.cpp:949` runs a fixed 51 iterations with no convergence test and no residual
 threshold. That looks like overkill for a Newton solve and is not, because it is not a Newton solve:
 `fnprime` is `-v · v` (`:959`), dropping the acceleration term `(target − sat) · a` of the true
-derivative. The result converges *linearly*, at a measured factor of about 10.9 per iteration.
+derivative. The result converges *linearly*, at a rate of about 0.09 per iteration for the fixture's
+geometry — not quadratically. At iteration 4 the estimate is still 4 ms off, where a quadratic method
+would be exact. Past convergence it does not settle but oscillates at the ULP of `aztime`, since the
+step at a fixed point need not round to zero.
 
-From a scene-center start about 60 s from the answer that means roughly 15 iterations to reach
-machine precision — at iteration 4 the estimate is still 4 ms off, where a quadratic method would be
-exact. Past convergence it does not settle but oscillates at the 1e-12 s level, since the step at a
-fixed point need not round to zero. Both facts make the count unlowerable: truncating early changes
-the answer, and truncating late changes the last bits.
+The rate is not a constant of the algorithm but a function of the geometry, and it has a closed form.
+Since `f'(t) = -v · v + look · a` and a near-circular orbit has `a = -ω²x`,
+
+    r = 1 - (r_t / R) cos(ψ)
+
+with `R` the satellite's geocentric radius, `r_t` the target's, and `ψ` the geocentric angle between
+them. This predicts the measured rate to four significant digits across altitudes from 350 to 1400 km
+and incidence angles from 15° to 50°. `R` dominates; incidence angle, terrain height, look side and
+grid geometry are all second order. This package exposes it as `geo2rdr_rate`, and the iteration count
+it implies as `geo2rdr_iterations_needed`.
+
+**This package runs 16 iterations, not 51** — the one place the radar path diverges from the reference
+by doing less work. See "The zero-Doppler iteration count is 16, not 51" under *Deliberate
+divergences*.
 
 ### The two time scales are two clocks
 
