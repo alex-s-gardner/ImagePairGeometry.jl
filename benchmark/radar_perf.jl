@@ -1,9 +1,9 @@
 # Per-point cost of the radar numerics, by stage.
 #
 # The radar forward mapping is far more expensive than the projected one: where that path costs three
-# transform calls, this one runs a 51-iteration solve, each iteration interpolating the orbit. So the
-# cost is dominated by `interpolate`, and the ratio below is what any caching or lattice scheme has to
-# beat.
+# transform calls, this one runs two iterative solves, and every zero-Doppler iteration interpolates the
+# orbit. So `interpolate` is the largest single primitive, and the ratio below is what any caching or
+# lattice scheme has to beat.
 
 using ImagePairGeometry
 using ImagePairGeometry: Ellipsoid, Orbit, interpolate, geo2rdr, rdr2geo,
@@ -69,7 +69,8 @@ const T_INTERP, T_SOLVE = let
     row("interpolate (one orbit eval)", interp, @allocated(interpolate(ORB, 122.5)))
 
     solve = @benchmark geo2rdr($ORB, $TARGET, $TMID, $TMID, $PM, $VM)
-    row("geo2rdr (51 iterations)", solve, @allocated(geo2rdr(ORB, TARGET, TMID, TMID, PM, VM)))
+    row("geo2rdr ($GEO2RDR_ITERATIONS iterations)", solve,
+        @allocated(geo2rdr(ORB, TARGET, TMID, TMID, PM, VM)))
 
     row("rdr2geo", (@benchmark rdr2geo($ORB, $EL, $(120.0), $(8.5e5); height = $(500.0),
                                        wavelength = $WVL, side = $LookRight)),
