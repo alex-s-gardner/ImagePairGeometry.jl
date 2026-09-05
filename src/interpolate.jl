@@ -316,11 +316,11 @@ A transform factory that approximates `transform` on a coarse lattice.
 
 Pass it as `pairgeometry`'s or `pairgeometry_blocked`'s `transform`. It is an
 [`AbstractTransformFactory`](@ref), so a blocked run calls it once per task and each task owns its
-own lattice and its own PROJ context for that task's lifetime — the same ownership the exact PROJ
-path needs, for the same reason.
+own lattice, and whatever state the underlying transform wraps, for that task's lifetime — the same
+ownership the exact path needs, for the same reason.
 
 `transform` is anything the exact path accepts: an [`AbstractCoordTransform`](@ref), a
-[`TransformPair`](@ref), or a factory such as `ProjTransformFactory`. `grid` and `pair` give the
+[`TransformPair`](@ref), or a zero-argument factory returning one. `grid` and `pair` give the
 region the lattice must cover; `window` defaults to the whole grid intersected with the pair's
 footprint, and must be the same window the result is computed over.
 
@@ -345,7 +345,7 @@ coordinates and extended by one image pixel beyond the footprint, because the ke
 the point stepped one pixel along each image axis.
 
 ```julia
-tf = InterpolatedTransform(ProjTransformFactory(3413, 32624), grid, pair;
+tf = InterpolatedTransform(fast_transform(3413, 32624), grid, pair;
                            lattice = 4, mode = :hybrid, window = win)
 r = pairgeometry_blocked(grid, pair, source; transform = tf, window = win, ntasks = 8)
 ```

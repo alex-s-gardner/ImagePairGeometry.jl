@@ -132,7 +132,7 @@ Builds a fresh [`TransformPair`](@ref) each time it is called, as `factory()`.
 A blocked run calls it once per task, so each task owns a transform for its lifetime. That is what
 `Proj` needs: a `Proj.Transformation` wraps a `PJ*` on a context that PROJ documents as usable from
 one thread at a time, and building two concurrently on the shared global context corrupts its
-SQLite handle. The `Proj` extension's `ProjTransformFactory` is the implementation, and
+SQLite handle. A caller wrapping such a library supplies the factory, and
 [`InterpolatedTransform`](@ref) is one that returns a lattice approximation.
 """
 abstract type AbstractTransformFactory end
@@ -155,4 +155,4 @@ _resolve_transform(factory::Function) = transform_pair(factory())
 _resolve_transform(x) = throw(ArgumentError(
     "transform must be an AbstractCoordTransform, a TransformPair, an AbstractTransformFactory, " *
     "or a zero-argument function returning one; got $(typeof(x)). Wrap a Proj.Transformation pair " *
-    "in TransformPair(fwd, inv), or use ProjTransformFactory so each task builds its own."))
+    "in TransformPair(fwd, inv), or supply a zero-argument factory so each task builds its own."))
