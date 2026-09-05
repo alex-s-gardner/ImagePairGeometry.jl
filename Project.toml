@@ -13,10 +13,12 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
+FastGeoProjections = "981663e8-0c94-46dd-b2cf-efc8480900ec"
 Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
 Rasters = "a3a2b9e3-a471-40c9-b274-f788e487c689"
 
 [extensions]
+ImagePairGeometryFastGeoProjectionsExt = "FastGeoProjections"
 ImagePairGeometryProjExt = "Proj"
 ImagePairGeometryRastersExt = ["Rasters", "DimensionalData", "ArchGDAL", "DiskArrays"]
 
@@ -25,6 +27,7 @@ ArchGDAL = "0.10"
 DimensionalData = "0.29, 0.30"
 DiskArrays = "0.4"
 Extents = "0.1"
+FastGeoProjections = "0.1"
 GeoFormatTypes = "0.4"
 GeoInterface = "1"
 Proj = "1.9"

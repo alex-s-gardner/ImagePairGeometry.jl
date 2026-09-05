@@ -47,7 +47,7 @@ export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
 export InterpolatedTransform, CoordLattice, build_lattice, latticesize
 export LatticeInterpolation, NearestNode, Bilinear, Bicubic
-export proj_transform
+export proj_transform, fast_transform
 export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
@@ -87,6 +87,19 @@ Defined when `Proj` is loaded. A threaded run wants `ProjTransformFactory` from 
 instead, so each task builds a transform on its own PROJ context.
 """
 function proj_transform end
+
+"""
+    fast_transform(grid_crs, image_crs) -> TransformPair
+
+A [`TransformPair`](@ref) between two EPSG codes, built with FastGeoProjections.
+
+Defined when `FastGeoProjections` is loaded. Both CRSs must be given as EPSG codes, since the
+transformation is looked up by code rather than parsed from a description.
+
+The result is safe to share across threads, so a blocked run passes it directly as `transform`
+rather than needing a factory the way the PROJ path does.
+"""
+function fast_transform end
 
 """
     mapgrid(dem) -> MapGrid

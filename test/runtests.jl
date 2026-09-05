@@ -21,5 +21,6 @@ include("npz.jl")
     @time @testset "geogrid vs reference" begin include("geogrid.jl") end
     @time @testset "blocks and threads" begin include("blocks.jl") end
     @time @testset "interpolated transform" begin include("interpolate.jl") end
+    @time @testset "FastGeoProjections transform" begin include("fastgeoprojections.jl") end
     @time @testset "Rasters IO" begin include("rasters.jl") end
 end
