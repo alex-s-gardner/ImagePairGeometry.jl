@@ -30,6 +30,9 @@ using StaticArrays: SVector
 using Extents: Extent
 import GeoFormatTypes as GFT
 import GeoInterface
+# A hard dependency rather than an extension: the radar path's ECEF conversions go through it, and
+# those live in `src/` because the range-Doppler solves call them per iteration.
+import FastGeoProjections as FGP
 
 export ImageFootprint, CoregisteredPair, coregister
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
@@ -47,7 +50,7 @@ export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
 export InterpolatedTransform, CoordLattice, build_lattice, latticesize
 export LatticeInterpolation, NearestNode, Bilinear, Bicubic
-export proj_transform, fast_transform
+export proj_transform, fast_transform, FastTransform
 export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
@@ -61,6 +64,8 @@ include("radar/geo2rdr.jl")
 include("radar/rdr2geo.jl")
 include("coordinates.jl")
 include("transforms.jl")
+# After `transforms.jl`: `FastTransform` subtypes `AbstractCoordTransform` and extends `inverse`.
+include("fasttransform.jl")
 include("pair.jl")
 include("grid.jl")
 include("radar/coordinate.jl")
@@ -87,19 +92,6 @@ Defined when `Proj` is loaded. A threaded run wants `ProjTransformFactory` from 
 instead, so each task builds a transform on its own PROJ context.
 """
 function proj_transform end
-
-"""
-    fast_transform(grid_crs, image_crs) -> TransformPair
-
-A [`TransformPair`](@ref) between two EPSG codes, built with FastGeoProjections.
-
-Defined when `FastGeoProjections` is loaded. Both CRSs must be given as EPSG codes, since the
-transformation is looked up by code rather than parsed from a description.
-
-The result is safe to share across threads, so a blocked run passes it directly as `transform`
-rather than needing a factory the way the PROJ path does.
-"""
-function fast_transform end
 
 """
     mapgrid(dem) -> MapGrid

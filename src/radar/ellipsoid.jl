@@ -1,19 +1,21 @@
 # The reference ellipsoid, and the orthonormal frame the range-Doppler solve works in.
 #
-# ECEF to geodetic has no closed form; this is Vermeille's 2002 solution, which differs from
-# GeographicLib's series in the last bits everywhere. It agrees with PROJ to 6e-9 m forward and
-# 9e-7 m inverse across latitudes, longitudes and heights.
+# The two ECEF conversions delegate to FastGeoProjections, which implements the same Vermeille 2002
+# closed form for the inverse. Delegating to PROJ instead is not an option at the altitudes this
+# package works at: PROJ's EPSG:4978-to-EPSG:4979 pipeline returns a height 4.0e-3 m out at 700 km,
+# where Vermeille's form recovers an exactly-computed position to 1.8e-9 m.
 #
 # isce3 sets `e2 = 0.0066943799901` (`geogridRadar.cpp:324-325`), truncated at eight significant
-# digits from WGS84's twelve. The full value is used here instead: the difference reaches positions
-# as 1.5e-7 m, which is 6e-8 of a range sample, so it moves no rounded index and every reference
-# output band still matches. Comparisons against the isce3 fixture are therefore to a tolerance
-# rather than to the bit.
+# digits from WGS84's twelve. The full value is used here instead, and that choice dominates every
+# other difference: it moves a position 1.5e-7 m, seventy-nine times the 1.9e-9 m by which this
+# arithmetic and isce3's differ. Comparisons against the isce3 fixture are therefore to a tolerance
+# rather than to the bit, on isce3's own constant as well as on this one -- see `REFERENCE.md`.
 #
 # Angles are radians and ordered `(lon, lat, height)` throughout, as isce3 orders them. That is not
 # the order the surrounding package uses for map coordinates, and the two meet at the transform
 # boundary in `geo2rdr.jl`, which is why the conversion helpers here are explicit about which they
-# take.
+# take. FastGeoProjections takes degrees, so the conversion happens at this boundary and nowhere
+# else.
 
 """
     WGS84_A
@@ -77,21 +79,12 @@ Prime vertical radius of curvature at geodetic latitude `lat` in radians (`Ellip
 
 ECEF position in meters from `llh = (lon, lat, height)` with the angles in radians.
 
-Transcribed from `Ellipsoid.h:195-208`.
+Evaluated by `FastGeoProjections.LonLatToGeocentric`, which takes degrees; the conversion is here so
+that the radians convention the radar solves use stops at this boundary.
 """
 @inline function lonlat_to_xyz(el::Ellipsoid, llh::SVector{3,Float64})
-    lon, lat, h = llh[1], llh[2], llh[3]
-    # `sincos` returns the pair in one call. Each value is bit-identical to the separate `sin`/`cos`
-    # it replaces — and `sin(lat)` is needed twice, once for the prime vertical radius and once for
-    # the z component, where the reference also evaluates it twice.
-    slat, clat = sincos(lat)
-    slon, clon = sincos(lon)
-    re = r_east_sin(el, slat)
-    return SVector{3,Float64}(
-        (re + h) * clat * clon,
-        (re + h) * clat * slon,
-        ((re * (1.0 - el.e2)) + h) * slat,
-    )
+    x, y, z = _fgp_forward(el)(rad2deg(llh[1]), rad2deg(llh[2]), llh[3])
+    return SVector{3,Float64}(x, y, z)
 end
 
 """
@@ -114,34 +107,21 @@ happens to be running. One ULP of angle here is 5e-10 m of position, against a r
 2.3 m. See `REFERENCE.md`.
 """
 @inline function xyz_to_lonlat(el::Ellipsoid, xyz::SVector{3,Float64})
-    x, y, z = xyz[1], xyz[2], xyz[3]
-    e2 = el.e2
-    e4 = e2 * e2
-    a2 = el.a * el.a
-
-    # Squared lateral distance, needed here and again for `d` below. The reference spells
-    # `std::pow(xyz[0], 2) + std::pow(xyz[1], 2)` out at both sites; one evaluation gives the same
-    # value, since each was already deterministic.
-    lat2 = x^2 + y^2
-
-    # Lateral and polar distances, normalized by the axes.
-    p = lat2 / a2
-    q = ((1.0 - e2) * z^2) / a2
-    r = (p + q - e4) / 6.0
-    s = (e4 * p * q) / (4.0 * r^3)
-    t = cbrt(1.0 + s + sqrt(s * (2.0 + s)))
-    u = r * (1.0 + t + (1.0 / t))
-    rv = sqrt(u^2 + (e4 * q))
-    w = (e2 * (u + rv - q)) / (2.0 * rv)
-    k = sqrt(u + rv + w^2) - w
-    d = (k * sqrt(lat2)) / (k + e2)
-
-    return SVector{3,Float64}(
-        atan(y, x),
-        atan(z, d),
-        ((k + e2 - 1.0) * sqrt(d^2 + z^2)) / k,
-    )
+    lon, lat, h = _fgp_inverse(el)(xyz[1], xyz[2], xyz[3])
+    return SVector{3,Float64}(deg2rad(lon), deg2rad(lat), h)
 end
+
+# The two FastGeoProjections operators for an ellipsoid, built per call.
+#
+# Constructing one is a handful of arithmetic operations on the ellipsoid's own fields -- no table
+# lookup and no PROJ context -- so this is not a cache, and measuring it against a `const` pair for
+# WGS84 showed no difference. Building per call is what keeps a non-WGS84 `Ellipsoid` working, which
+# `test/radar_numerics.jl` exercises on isce3's truncated `e2`.
+@inline _fgp_ellipsoid(el::Ellipsoid) =
+    FGP.Ellipsoid(el.a, el.a * sqrt(1.0 - el.e2), 1.0 - sqrt(1.0 - el.e2),
+                  sqrt(el.e2), el.e2, nothing, FGP.EPSG(0))
+@inline _fgp_forward(el::Ellipsoid) = FGP.LonLatToGeocentric(ellips = _fgp_ellipsoid(el))
+@inline _fgp_inverse(el::Ellipsoid) = FGP.GeocentricToLonLat(ellips = _fgp_ellipsoid(el))
 
 """
     TCNBasis

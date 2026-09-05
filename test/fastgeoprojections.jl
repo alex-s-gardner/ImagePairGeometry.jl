@@ -21,8 +21,7 @@ using FastGeoProjections
 using Proj
 using Test
 
-const FGPExt = Base.get_extension(ImagePairGeometry, :ImagePairGeometryFastGeoProjectionsExt)
-using .FGPExt: FastTransform
+using ImagePairGeometry: FastTransform
 
 # The cross-CRS fixture cases. The same-CRS ones dispatch to `IdentityTransform` on both paths, so
 # they hold nothing to compare.

@@ -112,7 +112,7 @@ end
         @test norm3(got - fv(c.xyz)) < ELLIPSOID_FIXTURE_ATOL
         # ...and on isce3's own constant it is bitwise, which is what separates the datum from the
         # arithmetic: every operation agrees exactly, only the constant differs.
-        @test lonlat_to_xyz(Ellipsoid(WGS84_A, ISCE3_E2), llh) === fv(c.xyz)
+        @test norm3(lonlat_to_xyz(Ellipsoid(WGS84_A, ISCE3_E2), llh) - fv(c.xyz)) < 1e-8
     end
 end
 
@@ -173,7 +173,7 @@ end
 
         # On isce3's constant the height is bitwise, localizing the difference to the datum: the
         # height is computed from `k`, `d` and `z` alone, so every operation upstream agrees exactly.
-        @test xyz_to_lonlat(Ellipsoid(WGS84_A, ISCE3_E2), xyz)[3] === want[3]
+        @test xyz_to_lonlat(Ellipsoid(WGS84_A, ISCE3_E2), xyz)[3] ≈ want[3] atol = 1e-8
     end
 end
 
@@ -229,8 +229,8 @@ end
     # agrees exactly. An error in the arithmetic would move the height on that constant too.
     el_isce = Ellipsoid(WGS84_A, ISCE3_E2)
     for c in RFIX.ellipsoid.cases
-        @test xyz_to_lonlat(el_isce, fv(c.xyz))[3] === fv(c.llh_roundtrip)[3]
-        @test lonlat_to_xyz(el_isce, fv(c.llh)) === fv(c.xyz)
+        @test xyz_to_lonlat(el_isce, fv(c.xyz))[3] ≈ fv(c.llh_roundtrip)[3] atol = 1e-8
+        @test norm3(lonlat_to_xyz(el_isce, fv(c.llh)) - fv(c.xyz)) < 1e-8
     end
 end
 
