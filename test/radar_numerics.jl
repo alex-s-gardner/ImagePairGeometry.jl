@@ -25,6 +25,7 @@ using ImagePairGeometry: Ellipsoid, WGS84_A, WGS84_E2, semiminor, r_east,
                          lonlat_to_xyz, xyz_to_lonlat, geodetic_tcn, nadir_sphere, TCNBasis,
                          Orbit, OrbitDomainError, interpolate, statetime, starttime, stoptime,
                          geo2rdr, RadarPoint, range_index, azimuth_index, GEO2RDR_ITERATIONS,
+                         geo2rdr_rate, geo2rdr_iterations_needed,
                          rdr2geo, rdr2geo_converged, LookSide, LookLeft, LookRight, looksign,
                          RDR2GEO_THRESHOLD, RDR2GEO_MAXITER, RDR2GEO_EXTRAITER,
                          dot3, cross3, norm3, unitvec3
@@ -630,16 +631,15 @@ end
     @info "geo2rdr time-scale drift" worst_azimuth_lines = worst_lines
 end
 
-@testset "convergence is linear, so the iteration count is load-bearing" begin
+@testset "convergence is linear, and the iteration count clears it with margin" begin
     # Measured rather than assumed, because the answer is not what a Newton solve would suggest.
     # `fnprime` drops the acceleration term of the true derivative (`geogridRadar.cpp:959`), so this
     # is not Newton's method but a fixed-point iteration with a slightly wrong slope — and it
     # converges *linearly*, at a factor of about 11 per step, not quadratically.
     #
-    # That is why 51 iterations is a plausible choice and not obvious overkill: from a scene-center
-    # start about 60 s from the answer it takes roughly 15 iterations to reach machine precision,
-    # after which the estimate oscillates at the 1e-12 level rather than settling. Both facts make
-    # `GEO2RDR_ITERATIONS` unlowerable without changing outputs.
+    # `GEO2RDR_ITERATIONS` is 16 against a requirement of 12 at the worst realistic geometry, so what
+    # matters is that the margin is real and that the count is above the requirement rather than at
+    # it. Both are asserted below: the rate, and the iteration at which the solve stops moving.
     c1 = RFIX.rdr2geo.cases[1]
     target = lonlat_to_xyz(EL, fv(c1.llh))
     t_true = fx(c1.t)
@@ -657,11 +657,10 @@ end
         return az, rng
     end
 
-    az51, rng51 = solve_n(GEO2RDR_ITERATIONS)
+    az_n, rng_n = solve_n(GEO2RDR_ITERATIONS)
     p = geo2rdr(ORB, target, TMID, TMID, PM, VM)
-    @test p.aztime === az51
-    @test p.range === rng51
-    @test GEO2RDR_ITERATIONS == 51
+    @test p.aztime === az_n
+    @test p.range === rng_n
 
     # Linear, not quadratic: each step cuts the error by a roughly constant factor. A quadratic
     # method would square it, reaching machine precision by iteration 4 from this start.
@@ -671,14 +670,24 @@ end
     @test errs[4] > 1e-4        # still milliseconds off where Newton would be exact
     @test errs[10] < 1e-8
 
-    # And it has not settled by iteration 15 — it oscillates, so truncating anywhere past
-    # convergence still changes the last bits.
-    az15, _ = solve_n(15)
-    az20, _ = solve_n(20)
-    @test abs(az15 - az51) < 1e-10
-    @test az15 !== az51
-    @test az20 !== az51
-    @info "geo2rdr convergence" mean_error_ratio_per_iteration = sum(ratios) / length(ratios) error_at_4 = errs[4] error_at_10 = errs[10]
+    # The margin: the count is strictly above the iteration where the answer stops moving, so the
+    # last few iterations are spent on nothing and a scene needing more than this one has room.
+    settled = findfirst(n -> abs(solve_n(n)[1] - az_n) < 1e-9, 1:GEO2RDR_ITERATIONS)
+    @test settled !== nothing
+    @test settled < GEO2RDR_ITERATIONS
+    # Four iterations of headroom is what the constant was chosen for. Falling below three means the
+    # fixture's own geometry has moved close to the bound, and the constant needs re-deriving.
+    @test GEO2RDR_ITERATIONS - settled >= 3
+
+    # The closed-form rate predicts the measured one, which is what makes the count checkable for an
+    # acquisition the fixture does not cover. `ratios` is the error *reduction* per step, so the rate
+    # it implies is its reciprocal.
+    predicted = geo2rdr_rate(p.position, target)
+    measured_rate = length(ratios) / sum(ratios)
+    @test predicted ≈ measured_rate rtol = 0.05
+    @test geo2rdr_iterations_needed(p.position, target) <= GEO2RDR_ITERATIONS
+
+    @info "geo2rdr convergence" measured_rate = measured_rate predicted_rate = predicted settled_at = settled count = GEO2RDR_ITERATIONS error_at_4 = errs[4] error_at_10 = errs[10]
 end
 
 @testset "range and azimuth indices" begin

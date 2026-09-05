@@ -20,10 +20,14 @@ using ImagePairGeometry: Ellipsoid, Orbit, RadarCoordinate, LookLeft, LookRight,
                          incidence_angle, interpolate, rdr2geo,
                          pointgeometry, PointGeometry, RadarSpacing, RANGE_DOPPLER_ITERATIONS,
                          GEO2RDR_ITERATIONS, _range_doppler,
-                         lonlat_to_xyz, norm3, dot3,
+                         lonlat_to_xyz, xyz_to_lonlat, norm3, dot3, unitvec3,
+                         geodetic_tcn, nadir_sphere, looksign,
                          surface_normal, cross_check, offset_to_velocity, scale_factors,
                          axis_velocity, TransformPair, transform_pair, IdentityTransform,
-                         midtime, orbit_midtime, range_index, azimuth_index, ysize
+                         midtime, orbit_midtime, range_index, azimuth_index, ysize,
+                         SceneCenterStart, WarmStart, WARM_START_MIN_ITERATIONS,
+                         ZeroDopplerSeed, geo2rdr, _geocentric_radius, Ellipsoid, WGS84_A,
+                         WGS84_E2
 using Proj
 using StaticArrays: SVector
 using Test
@@ -209,9 +213,60 @@ end
     end
 end
 
-@testset "iteration counts are the reference's" begin
-    @test RANGE_DOPPLER_ITERATIONS == 10
-    @test GEO2RDR_ITERATIONS == 51
+"""The range-Doppler solve at an arbitrary iteration count, for checking convergence.
+
+A transcription of `_range_doppler` with the count as an argument, so a test can watch the iterate
+settle. Kept here rather than parameterizing the package's own loop, which stays a fixed count with
+no branch.
+"""
+function _range_doppler_n(el, c, satx, satv, rngpix, height, niter)
+    vhat = unitvec3(satv)
+    radius, _, _, a = nadir_sphere(el, satx)
+    tcn = geodetic_tcn(satx, satv)
+    ndotv = dot3(tcn.nhat, vhat)
+    vdott = dot3(vhat, tcn.that)
+    zsch = height
+    llhi = SVector{3,Float64}(0.0, 0.0, 0.0)
+    targ_xyz = llhi
+    for _ in 1:niter
+        b = radius + zsch
+        costheta = 0.5 * (a / rngpix + rngpix / a - (b / a) * (b / rngpix))
+        sintheta = sqrt(1 - costheta * costheta)
+        gamma = rngpix * costheta
+        alpha = -gamma * ndotv / vdott
+        beta = -looksign(c.look_side) * sqrt(rngpix * rngpix * sintheta * sintheta - alpha * alpha)
+        targ_vec = satx + alpha * tcn.that + beta * tcn.chat + gamma * tcn.nhat
+        lonlat = xyz_to_lonlat(el, targ_vec)
+        llhi = SVector{3,Float64}(lonlat[1], lonlat[2], height)
+        targ_xyz = lonlat_to_xyz(el, llhi)
+        zsch = norm3(targ_xyz) - radius
+    end
+    return (targ_xyz, llhi)
+end
+
+@testset "iteration counts clear their requirements with margin" begin
+    # Neither count is the reference's: 6 against 10, and 16 against 51. Each is justified at its own
+    # constant's docstring by a sweep over acquisition geometry, and each is asserted here to sit
+    # above the count its own convergence needs rather than merely to equal a number.
+    @test RANGE_DOPPLER_ITERATIONS == 6
+    @test GEO2RDR_ITERATIONS == 16
+
+    # The range-Doppler requirement, at the mid-latitude geometry where its rate is worst rather than
+    # at the fixture's near-equatorial one. Convergence is measured against the answer well past the
+    # floor, so `settled` is where the target stops moving at all.
+    satx, satv = interpolate(GORB, 305.0)
+    rng = SR + 4000 * DR
+    for height in (0.0, 4000.0)
+        ref, _ = _range_doppler_n(EL, RC, satx, satv, rng, height, 30)
+        settled = findfirst(k -> norm3(first(_range_doppler_n(EL, RC, satx, satv, rng, height, k))
+                                       - ref) < 1e-7,
+                            1:RANGE_DOPPLER_ITERATIONS)
+        @test settled !== nothing
+        @test settled < RANGE_DOPPLER_ITERATIONS
+        # Two iterations of headroom is what the constant was chosen for. Dropping below one means
+        # the count is at its requirement and must be re-derived.
+        @test RANGE_DOPPLER_ITERATIONS - settled >= 1
+    end
 end
 
 @testset "the radar path negates a y displacement" begin
@@ -236,4 +291,105 @@ end
     lon, lat, h = known_point(305.0, SR + 4000 * DR)
     pointgeometry(idt, lon, lat, h, RC, NORMAL)
     @test @allocated(pointgeometry(idt, lon, lat, h, RC, NORMAL)) == 0
+end
+
+@testset "the zero-Doppler start policy" begin
+    # `SceneCenterStart` must reproduce the no-argument call exactly: it is the default, and the whole
+    # radar fixture is asserted against it.
+    gx, gy, gz = utm_point(305.0, SR + 4000 * DR)
+    a = pointgeometry(UTM, gx, gy, gz, RC, NORMAL)
+    b = pointgeometry(UTM, gx, gy, gz, RC, NORMAL, SceneCenterStart(), nothing)
+    @test a[1].image_xy === b[1].image_xy
+    @test a[3].aztime === b[3].aztime
+    @test a[3].range === b[3].range
+
+    # A `WarmStart` with no predecessor cold-starts, so its first point matches too.
+    seed = ZeroDopplerSeed()
+    @test !seed.valid
+    c = pointgeometry(UTM, gx, gy, gz, RC, NORMAL, WarmStart(), seed)
+    @test c[3].aztime === a[3].aztime
+    # ...and the seed now carries that answer forward.
+    @test seed.valid
+    @test seed.aztime === a[3].aztime
+    @test seed.position === a[3].position
+
+    # A second point started from it agrees with the cold solve on both indices. `WarmStart`'s
+    # minimum exists to keep the *float* bands in agreement too; that is asserted whole-band in
+    # `radar_geogrid.jl`, since a single point cannot show a band's worst case.
+    gx2, gy2, gz2 = utm_point(305.0 + 0.01, SR + 4010 * DR)
+    warm = pointgeometry(UTM, gx2, gy2, gz2, RC, NORMAL, WarmStart(), seed)
+    cold = pointgeometry(UTM, gx2, gy2, gz2, RC, NORMAL)
+    @test warm[1].image_xy === cold[1].image_xy
+
+    # The minimum is enforced, and it is the float bands that set it rather than the indices.
+    @test WARM_START_MIN_ITERATIONS == 8
+    @test WarmStart().iterations == WARM_START_MIN_ITERATIONS
+    @test_throws "must be at least 8" WarmStart(iterations = 7)
+    @test_throws "must be at least 8" WarmStart(iterations = 1)
+    @test_throws "above GEO2RDR_ITERATIONS" WarmStart(iterations = GEO2RDR_ITERATIONS + 1)
+
+    # `geo2rdr`'s count is an argument now; the default must still be the constant.
+    target = lonlat_to_xyz(EL, ImagePairGeometry.xyz_to_lonlat(EL,
+        ImagePairGeometry.lonlat_to_xyz(EL, SVector{3,Float64}(0.1, 0.34, 0.0))))
+    pm, vm = interpolate(GORB, orbit_midtime(RC))
+    p_default = geo2rdr(GORB, target, midtime(RC), orbit_midtime(RC), pm, vm)
+    p_explicit = geo2rdr(GORB, target, midtime(RC), orbit_midtime(RC), pm, vm, GEO2RDR_ITERATIONS)
+    @test p_default.aztime === p_explicit.aztime
+    @test p_default.range === p_explicit.range
+end
+
+@testset "_geocentric_radius replaces a round trip to a few ULP" begin
+    # The range-Doppler loop reads only `norm3(targ_xyz)` from its forward conversion, and that norm is
+    # independent of longitude: the ellipsoid is a surface of revolution. `_geocentric_radius` computes
+    # it from the latitude alone, which is what lets the loop skip the conversion until its last
+    # iteration.
+    #
+    # Mathematically the two are the same quantity; in floating point they are two expressions for it
+    # and round differently, so the bound is a few ULP rather than bitwise equality. Measured over
+    # 74185 latitude/longitude/height combinations: 2 ULP on WGS84 and on isce3's truncated `e2`,
+    # 3 ULP on a deliberately eccentric non-standard ellipsoid. At Earth radius 3 ULP is 2.8e-9 m —
+    # the magnitude of this solve's own fixed-point floor, so the substitution cannot move the answer
+    # further than the iteration already moves it, and 1.3e-9 of a range sample either way.
+    worst_ulp = 0
+    worst_m = 0.0
+    for lat_deg in (-89.9, -60.0, -23.5, 0.0, 19.5, 45.0, 60.0, 82.0, 89.9)
+        for h in (-430.0, 0.0, 500.0, 4000.0, 8848.0)
+            for lon_deg in (-179.0, -45.0, 0.0, 90.0, 178.0)
+                llh = SVector{3,Float64}(deg2rad(lon_deg), deg2rad(lat_deg), h)
+                # The quantity being replaced, computed the way the loop computed it.
+                want = norm3(lonlat_to_xyz(EL, llh))
+                got = _geocentric_radius(EL, sin(llh[2]), h)
+                u = abs(reinterpret(Int64, want) - reinterpret(Int64, got))
+                @test u <= 4
+                worst_ulp = max(worst_ulp, u)
+                worst_m = max(worst_m, abs(want - got))
+            end
+        end
+    end
+    @test worst_m < 1e-8
+    @info "_geocentric_radius vs the round trip" worst_ulp worst_meters = worst_m
+
+    # Longitude must not enter at all — the closed form does not take it, and the round trip must not
+    # depend on it either, or the substitution would be unsound rather than merely differently rounded.
+    let ref = norm3(lonlat_to_xyz(EL, SVector{3,Float64}(0.0, deg2rad(45.0), 500.0)))
+        for lon_deg in (-179.0, -45.0, 90.0, 178.0)
+            @test norm3(lonlat_to_xyz(EL, SVector{3,Float64}(deg2rad(lon_deg), deg2rad(45.0),
+                                                             500.0))) === ref
+        end
+    end
+
+    # And it is not accidentally specific to WGS84: a non-standard ellipsoid must work too, since
+    # `Ellipsoid` is constructible with any `a` and `e2` and `radar_numerics.jl` exercises isce3's.
+    for el in (Ellipsoid(), Ellipsoid(WGS84_A, 0.0066943799901), Ellipsoid(6.0e6, 0.02))
+        for lat_deg in (-70.0, 0.0, 33.0, 71.0), h in (0.0, 3000.0)
+            llh = SVector{3,Float64}(0.3, deg2rad(lat_deg), h)
+            @test _geocentric_radius(el, sin(llh[2]), h) ≈ norm3(lonlat_to_xyz(el, llh)) rtol = 1e-15
+        end
+    end
+
+    # A sphere is the degenerate case the formula must not special-case its way out of.
+    sphere = Ellipsoid(6.371e6, 0.0)
+    for lat_deg in (0.0, 45.0, 89.0), h in (0.0, 1000.0)
+        @test _geocentric_radius(sphere, sin(deg2rad(lat_deg)), h) ≈ 6.371e6 + h rtol = 1e-15
+    end
 end

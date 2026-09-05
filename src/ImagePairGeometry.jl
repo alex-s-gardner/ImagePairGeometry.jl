@@ -40,17 +40,23 @@ export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
 # because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
 export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
+# Both solves run a fixed iteration count chosen against SAR geometry -- orbital altitude for one,
+# target latitude for the other -- so a caller working outside that range needs to be able to check
+# them. See `GEO2RDR_ITERATIONS` and `RANGE_DOPPLER_ITERATIONS`.
+export GEO2RDR_ITERATIONS, RANGE_DOPPLER_ITERATIONS, geo2rdr_rate, geo2rdr_iterations_needed
 export MapGrid, footprint_bounds, grid_window
 export IdentityTransform, AffineTransform, TransformPair, transform_pair
 export NoDataPolicy, nodata_from
 export chip_size_pixels
 export PairGeometry, GeometryInputs, GeometryParams, SearchRangeScaling
+# The zero-Doppler start policy is a `GeometryParams` field, so a caller choosing one needs both.
+export ZeroDopplerStart, SceneCenterStart, WarmStart
 export pairgeometry, pairgeometry_blocked, npoints, nvalid, velocity_conversion
 export AbstractInputSource, InMemoryInputs, readblock, block_ranges
 export AbstractTransformFactory
 export InterpolatedTransform, CoordLattice, build_lattice, latticesize
 export LatticeInterpolation, NearestNode, Bilinear, Bicubic
-export proj_transform, fast_transform, FastTransform
+export fast_transform, FastTransform
 export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 
 include("kernel/vecmath.jl")
@@ -82,16 +88,6 @@ include("blocks.jl")
 # After `blocks.jl`: `InterpolatedTransform` subtypes `AbstractTransformFactory`, so that type must
 # exist first.
 include("interpolate.jl")
-
-"""
-    proj_transform(grid_crs, image_crs) -> TransformPair
-
-A [`TransformPair`](@ref) between two CRSs, built with PROJ.
-
-Defined when `Proj` is loaded. A threaded run wants `ProjTransformFactory` from that extension
-instead, so each task builds a transform on its own PROJ context.
-"""
-function proj_transform end
 
 """
     mapgrid(dem) -> MapGrid

@@ -21,7 +21,7 @@ using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, RADAR_REFERENCE_FILES, referenc
                          incidence_angle, nodata_from, xsize, ysize, TransformPair,
                          footprint_bounds, grid_window, MapGrid, CoregisteredPair,
                          GeometryInputs, pairgeometry, pairgeometry_blocked,
-                         InMemoryInputs, nvalid
+                         InMemoryInputs, nvalid, GeometryParams, WarmStart
 using JSON3
 using Proj
 using StaticArrays: SVector
@@ -330,6 +330,57 @@ end
             @test getfield(r, f) == getfield(ref, f)
         end
     end
+end
+
+@testset "WarmStart trades blocking invariance for speed, on this path specifically" begin
+    # The testset above is the guarantee: `SceneCenterStart` makes every point independent, so a
+    # blocked run matches a whole-window one bit for bit. `WarmStart` gives that up deliberately —
+    # each point starts from its predecessor, so the first point of every block cold-starts and the
+    # sequence differs. Asserted here rather than only documented, because the loss is the *reason*
+    # the option is opt-in, and a future change that hid it would mean the warm start had stopped
+    # doing anything.
+    c = only(filter(x -> x.name == "utm32n", collect(GFIX.cases)))
+    _, win, coord, grid, _ = radar_case(c)
+    pair = CoregisteredPair(coord; dt = Float64(c.dt))
+    inputs = fixture_inputs(GARR, c, win)
+    src = InMemoryInputs(inputs, win)
+    factory() = TransformPair(
+        Proj.Transformation("EPSG:$(c.grid.epsg)", "EPSG:4326"; always_xy = true),
+        Proj.Transformation("EPSG:4326", "EPSG:$(c.grid.epsg)"; always_xy = true))
+    warm = GeometryParams(zero_doppler_start = WarmStart())
+
+    whole = pairgeometry(grid, pair, inputs; transform = factory(), window = win,
+                         params = warm, nodata = nodata_from(0.0))
+    blocked = pairgeometry_blocked(grid, pair, src; transform = factory, window = win,
+                                   blocksize = (16, 16), ntasks = 1, params = warm,
+                                   nodata = nodata_from(0.0))
+
+    # The integer bands survive it: no rounded index moves, which is what makes the option usable at
+    # all. Were this to fail, the warm start would be changing products and not just their last bits.
+    for f in INT_BANDS
+        @test getfield(whole, f) == getfield(blocked, f)
+    end
+
+    # The float bands do not, and that is the documented cost. At least one must differ, or the
+    # sequence dependence has silently vanished.
+    anydiff = any(reinterpret(UInt64, getfield(whole, f)) != reinterpret(UInt64, getfield(blocked, f))
+                  for f in FLOAT_BANDS)
+    @test anydiff
+
+    # How far apart, in the unit the bands are spent in. Reported so the size of the cost is on the
+    # record rather than inferred.
+    worst = 0.0
+    for f in FLOAT_BANDS
+        a = getfield(whole, f); b = getfield(blocked, f)
+        for i in eachindex(a, b)
+            (a[i] == -32767.0 || b[i] == -32767.0) && continue
+            worst = max(worst, abs(a[i] - b[i]) / max(abs(b[i]), 1.0))
+        end
+    end
+    # Inside the bound the same bands are held to against isce3, so a blocked warm run is still a
+    # valid product -- it is simply not the *same* product to the bit.
+    @test worst < 2e-4
+    @info "WarmStart blocked-vs-whole float divergence" worst_relative = worst bound = 2e-4
 end
 
 @testset "the band layout comes from the coordinate, not the bands" begin
