@@ -5,6 +5,7 @@ authors = ["Alex Gardner <alex.s.gardner@jpl.nasa.gov>", "and contributors"]
 
 [deps]
 Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
+FastGeoProjections = "981663e8-0c94-46dd-b2cf-efc8480900ec"
 GeoFormatTypes = "68eda718-8dee-11e9-39e7-89f7f65f511f"
 GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
@@ -25,6 +26,7 @@ ArchGDAL = "0.10"
 DimensionalData = "0.29, 0.30"
 DiskArrays = "0.4"
 Extents = "0.1"
+FastGeoProjections = "0.1"
 GeoFormatTypes = "0.4"
 GeoInterface = "1"
 Proj = "1.9"

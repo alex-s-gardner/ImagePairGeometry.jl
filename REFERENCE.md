@@ -318,16 +318,23 @@ reports `(lat, lon)` limits where a projected one reports `(x, y)`. Not reproduc
 takes a transform rather than an EPSG code, so the caller's transform already fixes the axis
 convention, and re-deriving it from a code the function never sees would be guesswork.
 
-### Why the radar numerics are implemented here rather than delegated
+### Where the ECEF conversions come from, and why not PROJ
 
-ECEF to geodetic has no closed form. This is Vermeille's 2002 solution, as isce3 uses
-(`Ellipsoid.h:210-238`), on WGS84's `e2` at full precision — `6.69437999014e-3`, where isce3
+ECEF to geodetic has no closed form. Both directions are `FastGeoProjections.LonLatToGeocentric` and
+`GeocentricToLonLat`, which implement Vermeille's 2002 solution — the same one isce3 uses
+(`Ellipsoid.h:210-238`) — on WGS84's `e2` at full precision, `6.69437999014e-3`, where isce3
 truncates to `0.0066943799901` at eight significant digits (`geogridRadar.cpp:324-325`).
 
-Delegating the inverse is not an option at the altitudes this package works at. PROJ's
+Delegating to **PROJ** is not an option at the altitudes this package works at. Its
 EPSG:4978-to-EPSG:4979 pipeline returns a height 4.0e-3 m out and a latitude 1.9e-8° out at 700 km,
 where Vermeille's form recovers an exactly-computed ECEF position to 1.8e-9 m. PROJ is accurate below
-the troposphere and is the reference there; above it, it is the less accurate of the two.
+the troposphere and is the reference there; above it, it is the less accurate of the two. The choice
+is therefore not between a local implementation and a library, but between two libraries, one of
+which is wrong where this package works.
+
+FastGeoProjections is a hard dependency rather than an extension because of where these are called:
+the range-Doppler solves invoke them per iteration from `src/`, so they cannot sit behind a
+conditional load.
 
 Geodesy.jl is in the test environment as an independent implementation to check against at 1e-9. A
 fixture generated from isce3 cannot distinguish a correct implementation from a faithful
@@ -340,16 +347,21 @@ identified cause and is asserted in `test/radar_numerics.jl`, with the observed 
 every run.
 
 The ellipsoid conversions are checked against PROJ and against an exact round trip, with the fixture
-as a secondary check at 1e-6 m — the size of the datum difference. On isce3's own `e2` both
-conversions are bitwise against the fixture, which is what establishes that the arithmetic is
-identical and only the constant differs.
+as a secondary check at 1e-6 m — the size of the datum difference.
+
+Agreement with the fixture on isce3's own `e2` is to 1e-8 m rather than to the bit. Both
+implementations evaluate the same Vermeille form, but they group the constants differently and reach
+their transcendentals through different routines, so the last bits differ by 1.9e-9 m. That is
+**seventy-nine times smaller than the 1.5e-7 m the datum choice itself moves a position**, which is
+what makes the distinction it once drew — arithmetic against constant — no longer worth a bitwise
+assertion: the constant dominates either way.
 
 | quantity | agreement | cause where not bitwise |
 |---|---|---|
 | `lonlat_to_xyz` vs PROJ | **5.7e-9 m** | Vermeille vs PROJ's formulation |
 | `xyz_to_lonlat` round trip | **1.8e-9 m** in height, 1.9e-9 m on the ground | — |
 | `xyz_to_lonlat` vs PROJ, h ≤ 100 km | < 1e-6 m | PROJ's own inverse accuracy |
-| either conversion, on isce3's `e2` | **bitwise**, all cases | — |
+| either conversion, on isce3's `e2` | 1.9e-9 m | constant grouping and transcendental routine |
 | either conversion, vs the fixture | 1.5e-7 m | `e2`: full precision vs isce3's truncation |
 | Hermite position | bitwise on 10 of 11 cases, else 1 ULP | contraction in isce3's accumulation |
 | Hermite velocity | 4e-14 relative | contraction, amplified by cancellation in `g0` |

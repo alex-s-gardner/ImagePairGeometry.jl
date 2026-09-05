@@ -200,6 +200,9 @@ function setup_case(name)
     c = only(filter(x -> x.name == name, collect(GEOGRID_FIXTURE.cases)))
     s = fixture_scene(c)
     win = grid_window(s.grid, footprint_bounds(s.transform(), s.coord))
+    # The two EPSG codes as integers. `grid.crs` holds a `GeoFormat` and a `ProjectedCoordinate`
+    # carries no CRS at all, so a test building its own transform reads them from here.
     return (; s.grid, s.pair, s.coord, win, s.params, s.same,
+            grid_epsg = Int(c.dem.epsg), image_epsg = Int(c.image.epsg),
             inputs = fixture_inputs(GEOGRID_ARRAYS, c, win), makepair = s.transform)
 end
