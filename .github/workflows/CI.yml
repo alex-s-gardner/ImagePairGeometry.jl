@@ -91,10 +91,14 @@ jobs:
           Pkg.activate(".")
           Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
       - uses: julia-actions/julia-buildpkg@v1
+      # `docs/Project.toml` names this package, which is unregistered, so the local copy has to be
+      # dev'd in before anything else can resolve there. `julia-docdeploy` does that itself, but not
+      # before this step needs it.
       - name: Use FastGeoProjections from main in docs
         shell: julia --project=docs --color=yes {0}
         run: |
           import Pkg
+          Pkg.develop(Pkg.PackageSpec(path = pwd()))
           Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
       - uses: julia-actions/julia-docdeploy@v1
         env:
