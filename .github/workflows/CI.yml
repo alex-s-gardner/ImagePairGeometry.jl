@@ -48,18 +48,18 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
       # FastGeoProjections' registered version predates the point-operator API this package is
-      # built on. Taken from `main` until a release carrying it is registered, in both the package
-      # and test environments, since `Pkg.test` resolves the latter separately. Remove both steps
-      # and let the `[compat]` bound resolve normally once that release exists.
+      # built on. Taken from `main` until a release carrying it is registered. Remove this step and
+      # let the `[compat]` bound resolve normally once that release exists.
+      #
+      # The package environment only: `test/Project.toml` names FastGeoProjections too, and Julia
+      # 1.10's `Pkg.test` fails with `can not merge projects` when a git-sourced package appears in
+      # both. Adding it here alone leaves one source for the merged environment to take.
       - name: Use FastGeoProjections from main
         shell: julia --color=yes {0}
         run: |
           import Pkg
-          url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"
           Pkg.activate(".")
-          Pkg.add(url = url, rev = "main")
-          Pkg.activate("test")
-          Pkg.add(url = url, rev = "main")
+          Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
@@ -81,17 +81,21 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v2
-      # As in the test job, and additionally in `docs`, which has its own environment.
+      # As in the test job. The package environment only: `docs/Project.toml` names
+      # ImagePairGeometry itself, which is unregistered, so activating `docs` before
+      # `julia-buildpkg` has `dev`'d the local copy into it fails to resolve.
       - name: Use FastGeoProjections from main
         shell: julia --color=yes {0}
         run: |
           import Pkg
-          url = "https://github.com/alex-s-gardner/FastGeoProjections.jl"
-          for env in (".", "docs")
-              Pkg.activate(env)
-              Pkg.add(url = url, rev = "main")
-          end
+          Pkg.activate(".")
+          Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
       - uses: julia-actions/julia-buildpkg@v1
+      - name: Use FastGeoProjections from main in docs
+        shell: julia --project=docs --color=yes {0}
+        run: |
+          import Pkg
+          Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
       - uses: julia-actions/julia-docdeploy@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -17,7 +17,9 @@
 using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, IdentityTransform, TransformPair,
                          nodata_from, transform_pair, inverse
-using FastGeoProjections
+# Imported qualified rather than with `using`: FastGeoProjections exports `EPSG`, and every test file
+# is included into the same `Main`, where `test/rasters.jl` binds that name to an integer of its own.
+import FastGeoProjections as FGP
 using Proj
 using Test
 
@@ -34,7 +36,7 @@ const CROSS_CASES = ("cross_crs", "cross_crs_3031", "cross_crs_nodata")
     @test tf.inverse isa FastTransform
 
     # Accepts EPSG objects as well as integers, and gives the same transform either way.
-    p = fast_transform(EPSG(3413), EPSG(32624))
+    p = fast_transform(FGP.EPSG(3413), FGP.EPSG(32624))
     @test p.forward(-1.5e5, -2.2e6, 1500.0) == tf.forward(-1.5e5, -2.2e6, 1500.0)
 
     # A CRS given any other way has no code to look up.
