@@ -145,6 +145,27 @@ threads.
 Where the grid and the imagery share a CRS, pass [`IdentityTransform`](@ref) instead — it is exact
 by construction and skips PROJ altogether, which is around 50 times faster per point.
 
+## A native transform
+
+[`fast_transform`](@ref) returns a [`TransformPair`](@ref) evaluated by
+[FastGeoProjections](https://github.com/alex-s-gardner/FastGeoProjections.jl) rather than by PROJ,
+for the EPSG pairs it implements natively — polar stereographic, UTM, and the geographic and
+geocentric systems.
+
+```julia
+tf = fast_transform(3413, 32624)
+r = pairgeometry_blocked(grid, pair, source; transform = tf, ntasks = 8)
+```
+
+Measured on the kernel's own call pattern it is 178 ns/point against PROJ's 445. It also needs no
+factory: the transformation is immutable and holds no PROJ state, so one object serves every task.
+
+It is not what the reference fixtures are asserted against. Agreement with PROJ is 3.7e-9 relative on
+the float bands — inside the bound `REFERENCE.md` sets — and every integer band stays bitwise, but
+PROJ remains the default and the comparison. Both CRSs must be given as EPSG codes, since
+FastGeoProjections resolves a transformation by code rather than parsing a description; use
+[`proj_transform`](@ref) for a WKT or PROJ string.
+
 ## Approximating the projection
 
 Where the CRSs differ, PROJ is most of the run: three calls per grid point, at roughly 300 ns each.
@@ -187,7 +208,7 @@ are on the [Radar geometry](radar.md) page.
 Modules = [ImagePairGeometry]
 Order = [:module, :type, :constant, :function, :macro]
 Pages = ["kernel/vecmath.jl", "kernel/rounding.jl", "coordinates.jl", "transforms.jl",
-         "pair.jl", "grid.jl", "kernel/searchrange.jl", "kernel/geometry.jl",
+         "fasttransform.jl", "pair.jl", "grid.jl", "kernel/searchrange.jl", "kernel/geometry.jl",
          "kernel/outputs.jl", "nodata.jl", "result.jl", "driver.jl", "blocks.jl",
          "interpolate.jl", "ImagePairGeometry.jl"]
 ```
