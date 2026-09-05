@@ -46,7 +46,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       # FastGeoProjections' registered version predates the point-operator API this package is
       # built on. Taken from `main` until a release carrying it is registered. Remove this step and
       # let the `[compat]` bound resolve normally once that release exists.
@@ -80,7 +80,7 @@ jobs:
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       # As in the test job. The package environment only: `docs/Project.toml` names
       # ImagePairGeometry itself, which is unregistered, so activating `docs` before
       # `julia-buildpkg` has `dev`'d the local copy into it fails to resolve.
