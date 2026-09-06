@@ -12,6 +12,11 @@ acquisition on a grid of a chosen size, and the `run_*.jl` scripts measure again
 cost and its breakdown, the statistical profile, storage scaling, and the accuracy-versus-iterations
 sweeps behind `GEO2RDR_ITERATIONS`, `RANGE_DOPPLER_ITERATIONS` and `WarmStart`.
 
+`run_chebyshev.jl` is the gate on `chebyshev_orbit`: the interpolant's accuracy over the whole orbit
+domain, the cost on a window, and every output band against the default Hermite path. The band
+comparison is the part that decides whether the option is safe to offer, so a change touching either
+interpolant should re-run it.
+
 `run_items23.jl`, `run_bitwise.jl`, `run_ceiling.jl` and `run_sepsum.jl` record measurements a source
 comment or commit message cites: which orbit-interpolation variants preserve the tested 1-ULP position
 agreement with isce3, which loop-invariant hoists are worth taking once inlined, and the bitwise gate

@@ -473,6 +473,45 @@ end
     @test interpolate(ORB, stoptime(ORB)) isa Tuple
 end
 
+@testset "chebyshev_orbit stays within its stated bound" begin
+    cheb = chebyshev_orbit(ORB)
+
+    # Opt-in by type, so the default orbit cannot pick this path up by accident.
+    @test ORB isa Orbit{Nothing}
+    @test cheb isa Orbit{<:ImagePairGeometry.ChebyshevCoefficients}
+    # The state vectors themselves are carried through untouched.
+    @test cheb.position === ORB.position
+    @test cheb.velocity === ORB.velocity
+    @test starttime(cheb) === starttime(ORB)
+    @test stoptime(cheb) === stoptime(ORB)
+
+    # The bound `chebyshev_orbit` documents, over the whole domain including the clamped
+    # brackets at either edge. Deliberately not bitwise -- that is the trade the option makes,
+    # and asserting the magnitude is what keeps it honest.
+    worst_p = 0.0
+    worst_v = 0.0
+    for t in range(starttime(ORB), stoptime(ORB); length = 2001)
+        p, v = interpolate(ORB, t)
+        pc, vc = interpolate(cheb, t)
+        worst_p = max(worst_p, norm3(p - pc))
+        worst_v = max(worst_v, norm3(v - vc))
+    end
+    @test worst_p < 1e-7
+    @test worst_v < 1e-8
+
+    # Interpolating at a state vector still returns that state vector, to the same bound: the
+    # series is fitted to the Hermite form, which is exact at the nodes.
+    for i in 1:length(ORB)
+        p, v = interpolate(cheb, statetime(ORB, i))
+        @test norm3(p - ORB.position[i]) < 1e-7
+        @test norm3(v - ORB.velocity[i]) < 1e-8
+    end
+
+    # The domain check is not lost on the faster path.
+    @test_throws OrbitDomainError interpolate(cheb, starttime(cheb) - 1e-6)
+    @test_throws OrbitDomainError interpolate(cheb, stoptime(cheb) + 1e-6)
+end
+
 # ------------------------------------------------------------------------------------ rdr2geo
 
 @testset "rdr2geo defaults match isce3" begin
