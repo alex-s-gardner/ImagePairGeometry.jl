@@ -65,6 +65,71 @@ outright.
 both: it measures the azimuth index against the first and interpolates the orbit against the second,
 so neither needs a conversion at the point of use.
 
+## The two iteration counts assume SAR geometry
+
+Both solves run a fixed iteration count with no convergence test, and both use fewer iterations than
+the reference: [`GEO2RDR_ITERATIONS`](@ref) is 16 against its 51, and
+[`RANGE_DOPPLER_ITERATIONS`](@ref) is 6 against its 10. Together they are worth about 2× of the
+per-point radar cost, and they are the two assumptions in this package that depend on a property of
+the acquisition rather than of the code.
+
+The two are governed by **different** parameters, so a geometry that is easy for one is not
+necessarily easy for the other:
+
+| | governed by | worst case | requirement | count |
+|---|---|---|---|---|
+| `GEO2RDR_ITERATIONS` | orbital altitude | high orbits | 12 | 16 |
+| `RANGE_DOPPLER_ITERATIONS` | target latitude | mid-latitudes, 30–45° | 4 | 6 |
+
+The range-Doppler count is the less exposed of the two: its rate vanishes at the equator and at the
+pole, so polar ITS_LIVE grids sit well inside the margin, and it reaches its arithmetic floor at 6 —
+further iterations cannot refine the answer, only land on different rounding noise. Altitude and
+terrain height each move its requirement by less than one iteration.
+
+The zero-Doppler count is the one to check against an unusual acquisition.
+
+The solve converges linearly at a rate [`geo2rdr_rate`](@ref) gives in closed form, and that rate is
+governed by **orbital altitude**. 16 covers every altitude from 350 to 800 km with four iterations of
+margin, which spans every operating SAR mission — Sentinel-1 and NISAR, the two this package is
+principally for, need 12. Terrain height, incidence angle, look side, grid spacing and repeat interval
+are all second order.
+
+Above roughly **1000 km** the requirement climbs past 16 and the constant must rise with it. If you
+are processing an acquisition from an unusually high orbit, or if radar geometry disagrees with an
+independent reference in a way that looks like a small azimuth-time error, check this first:
+
+```julia
+using ImagePairGeometry
+using ImagePairGeometry: geo2rdr_iterations_needed, GEO2RDR_ITERATIONS
+
+# satpos at scene center, target at the far swath edge, half the scene length as the guess error.
+needed = geo2rdr_iterations_needed(satpos, target; guess_error = 0.5 * nlines / prf)
+needed <= GEO2RDR_ITERATIONS || @warn "orbit needs more iterations than the fixed count" needed
+```
+
+`REFERENCE.md` records the mission-by-mission measurements behind the choice, what the fixture does
+and does not constrain, and the two things the study did not cover.
+
+## Trading blocking invariance for speed
+
+[`WarmStart`](@ref) starts each zero-Doppler solve from the previous grid point's answer instead of the
+scene midpoint. Adjacent points are a few hundredths of an azimuth line apart, so 8 iterations suffice
+where a cold start needs 16 — about **1.25×** on the radar path:
+
+```julia
+params = GeometryParams(zero_doppler_start = WarmStart())
+r = pairgeometry(grid, pair, inputs; transform = tf, window = win, params)
+```
+
+The cost is that results become order-dependent, so a blocked or threaded run no longer matches an
+unblocked one bit for bit. Integer bands are unaffected — no rounded index moves — but the float bands
+differ by up to 5e-7 relative, well inside the 2e-4 they are held to against isce3. If you need
+blocked and unblocked runs to agree exactly, keep the default `SceneCenterStart()`.
+
+Grid spacing does not change what the warm start needs: measured from 120 m to 10 km the divergence is
+flat and no index moves, so a **sparse pass for later interpolation** onto a finer grid is as safe as
+a dense one.
+
 ## API
 
 ```@autodocs

@@ -130,50 +130,97 @@ It is bit-identical to the unblocked run at any block size and task count, becau
 depends only on its own inputs:
 
 ```julia
-using Proj   # provides ProjTransformFactory
-
 source = InMemoryInputs(inputs, window)
 result = pairgeometry_blocked(grid, pair, source;
-                              transform = ProjTransformFactory(3413, 32624),
+                              transform = fast_transform(3413, 32624),
                               blocksize = (512, 512), ntasks = 8)
 ```
 
-A `ProjTransformFactory` (see [PROJ transforms](@ref)) rather than a built transform: it is called once per task, so each
-task holds a PROJ transformation on a context it alone uses. A context is not safe to share between
-threads.
+One transform object serves every task: a [`fast_transform`](@ref) pair is immutable and holds no
+library state, so nothing has to be built per task.
 
-Where the grid and the imagery share a CRS, pass [`IdentityTransform`](@ref) instead — it is exact
-by construction and skips PROJ altogether, which is around 50 times faster per point.
+Where the grid and the imagery share a CRS, pass [`IdentityTransform`](@ref) instead — it is exact by
+construction and skips the projection entirely.
 
-## A native transform
+A radar pair transforms between the grid CRS and geodetic degrees rather than between two projected
+CRSs, which needs no different call — `fast_transform` returns longitude/easting first by default:
+
+```julia
+result = pairgeometry_blocked(grid, pair, source;
+                              transform = fast_transform(32632, 4326),
+                              blocksize = (512, 512), ntasks = 8)
+```
+
+## Coordinate transforms
 
 [`fast_transform`](@ref) returns a [`TransformPair`](@ref) evaluated by
-[FastGeoProjections](https://github.com/alex-s-gardner/FastGeoProjections.jl) rather than by PROJ,
-for the EPSG pairs it implements natively — polar stereographic, UTM, and the geographic and
-geocentric systems.
+[FastGeoProjections](https://github.com/alex-s-gardner/FastGeoProjections.jl), for the EPSG pairs it
+implements natively — polar stereographic, UTM, and the geographic and geocentric systems. This is the
+only transform the package provides: nothing in `src/` links a projection library, so there is no PROJ
+dependency and no PROJ context to own per thread.
 
 ```julia
 tf = fast_transform(3413, 32624)
 r = pairgeometry_blocked(grid, pair, source; transform = tf, ntasks = 8)
 ```
 
-Measured on the kernel's own call pattern it is 178 ns/point against PROJ's 445. It also needs no
-factory: the transformation is immutable and holds no PROJ state, so one object serves every task.
+On the projected path it is 178 ns/point against PROJ's 445, measured on the kernel's own call pattern
+— and there the transform is most of the run, so that ratio is close to the run's. On the radar path
+the two geometry solves dominate and the transform is around 13% of a point, so the choice is worth a
+few percent either way; measured on EPSG:32632 to EPSG:4326 the native forward is in fact slightly
+slower than PROJ's. Pick it for having no dependency, not for speed.
 
-It is not what the reference fixtures are asserted against. Agreement with PROJ is 3.7e-9 relative on
-the float bands — inside the bound `REFERENCE.md` sets — and every integer band stays bitwise, but
-PROJ remains the default and the comparison. Both CRSs must be given as EPSG codes, since
-FastGeoProjections resolves a transformation by code rather than parsing a description; use
-[`proj_transform`](@ref) for a WKT or PROJ string.
+## Axis order
+
+`always_xy` defaults to **`true`**: a coordinate pair is `(easting, northing)` or
+`(longitude, latitude)`, whatever the CRS's authority order says.
+
+For a projected-to-projected pair the flag is inert — the EPSG codes this package is used with order a
+projected pair easting-first regardless — so it changes nothing the reference fixtures pin. Where it
+decides something is a geographic CRS: EPSG:4326's authority order is `(latitude, longitude)`.
+
+```julia
+julia> fast_transform(32632, 4326).forward(-242500.0, 2179000.0, 500.0)
+(1.9350326147365111, 19.567422331060865, 500.0)          # (lon, lat) -- the default
+
+julia> fast_transform(32632, 4326; always_xy = false).forward(-242500.0, 2179000.0, 500.0)
+(19.567422331060865, 1.9350326147365111, 500.0)          # (lat, lon) -- authority order
+```
+
+The default is not the reference's, which uses `osr.CoordinateTransformation` on SRSs from
+`ImportFromEPSG` — authority order. It is chosen against the failure mode instead: the radar path maps
+grid coordinates to geodetic degrees and reads the result as `(lon, lat, h)`, so an authority-order
+transform swaps the two and produces geometry that is wrong everywhere *without raising anything* — the
+solve converges happily against a target on the wrong side of the planet. Defaulting to the order the
+kernel wants removes a silent failure whose only symptom is bad output.
+
+Pass `always_xy = false` to reproduce authority order deliberately. If you build a `TransformPair` from
+PROJ yourself, note that `Proj.Transformation` defaults the other way, so a radar pair needs
+`always_xy = true` passed explicitly there.
+
+Both CRSs must be given as EPSG codes, since FastGeoProjections resolves a transformation by code
+rather than parsing a description. For a WKT or PROJ string, or a code it does not implement, build a
+[`TransformPair`](@ref) from any library that does — `Proj.jl` among them — and pass that:
+
+```julia
+using Proj
+tf = TransformPair(Proj.Transformation("EPSG:3413", "EPSG:32624"),
+                   Proj.Transformation("EPSG:32624", "EPSG:3413"))
+```
+
+A `Proj.Transformation` wraps a context that is not safe to share between threads, so a threaded run
+must pass a zero-argument factory returning a fresh pair rather than one built up front. The test
+suite does this — `Proj.jl` is a test dependency, since the reference fixtures were generated through
+PROJ and are asserted against it.
 
 ## Approximating the projection
 
-Where the CRSs differ, PROJ is most of the run: three calls per grid point, at roughly 300 ns each.
+Where the CRSs differ, the projection is most of a projected run: three calls per grid point.
 [`InterpolatedTransform`](@ref) tabulates the transform on a coarse lattice and interpolates between
 the nodes, with a selectable kernel — [`Bilinear`](@ref), [`Bicubic`](@ref) or [`NearestNode`](@ref).
 
 ```julia
-tf = InterpolatedTransform(ProjTransformFactory(3413, 32624), grid, pair;
+tf = InterpolatedTransform(fast_transform(3413, 32624), grid, pair;
                            lattice = 4, mode = :hybrid, interpolation = Bilinear(),
                            window = window)
 result = pairgeometry_blocked(grid, pair, source; transform = tf, window = window, ntasks = 8)
@@ -211,18 +258,6 @@ Pages = ["kernel/vecmath.jl", "kernel/rounding.jl", "coordinates.jl", "transform
          "fasttransform.jl", "pair.jl", "grid.jl", "kernel/searchrange.jl", "kernel/geometry.jl",
          "kernel/outputs.jl", "nodata.jl", "result.jl", "driver.jl", "blocks.jl",
          "interpolate.jl", "ImagePairGeometry.jl"]
-```
-
-## PROJ transforms
-
-Available when `Proj` is loaded.
-
-An extension module has no name bound in any module a `@autodocs` block can name, so it is fetched
-the same way any caller would: `Base.get_extension`.
-
-```@autodocs
-Modules = [Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)]
-Order = [:type, :function]
 ```
 
 ## Raster IO

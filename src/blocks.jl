@@ -11,9 +11,10 @@
 # is tens of gigabytes where a block is a few megabytes. There is no halo: a point reads only its
 # own DEM, slope, velocity, search-range, chip-size and mask values.
 #
-# Threading owns a PROJ context per task rather than per block, because building a `Transformation`
-# on a fresh context costs about 1.7 ms — dominated by a cold `proj.db` cache — against roughly
-# 50 ms of work for a 256×256 block. Per-task amortizes that to nothing; per-block would not.
+# A transform that must be built per task — one wrapping a PROJ context, say — is built once per task
+# rather than once per block: construction can cost milliseconds against roughly 50 ms of work for a
+# 256x256 block. `fast_transform` is immutable and stateless, so one object serves every thread and
+# the question does not arise.
 
 """
     block_ranges(window, blocksize) -> Vector{CartesianIndices{2}}
@@ -40,8 +41,8 @@ end
 Block size in grid points when none is given: `(512, 512)`.
 
 262144 points is a few megabytes of input per raster — small enough to bound memory on a
-continental grid, large enough that per-block overhead (a PROJ pipeline lookup, a task claim) is
-negligible against the per-point work.
+continental grid, large enough that per-block overhead (a block read, a task claim) is negligible
+against the per-point work.
 """
 const DEFAULT_BLOCKSIZE = (512, 512)
 
@@ -106,9 +107,9 @@ because each point depends only on its own inputs.
 
 `transform` may be a [`TransformPair`](@ref), an [`AbstractCoordTransform`](@ref), or — for a
 threaded run over a PROJ transform — a zero-argument function returning a fresh `TransformPair`.
-That last form exists because `Proj.Transformation` wraps a `PJ*` on a context that is not
-thread-safe: each task calls it once and owns the result for its lifetime. See
-`ProjTransformFactory`, defined when `Proj` is loaded.
+That last form exists for a transform holding state that is not safe to share across threads — a
+PROJ pipeline wraps a context that is not: each task calls the factory once and owns the result for
+its lifetime. [`fast_transform`](@ref) needs no factory, being immutable and stateless.
 """
 function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::AbstractInputSource;
                               transform, window = nothing,
@@ -123,9 +124,9 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
         throw(ArgumentError("ntasks must be at least 1, got $ntasks"))
 
     # Resolved at most once, and only where it is needed: deriving the window needs a transform, and
-    # a serial run needs one for the whole loop, but a threaded run builds its own per task. Each
-    # resolution of a factory creates a PROJ context and two pipelines — around 1.7 ms, dominated by
-    # a cold `proj.db` cache — so a wasted one is worth avoiding.
+    # a serial run needs one for the whole loop, but a threaded run builds its own per task. Resolving
+    # a factory can be expensive — a PROJ-backed one costs milliseconds — so a wasted one is worth
+    # avoiding.
     serial = ntasks == 1
     shared = (window === nothing || serial) ? _resolve_transform(transform) : nothing
     win = window === nothing ? grid_window(grid, footprint_bounds(shared, coord)) : window
@@ -147,7 +148,7 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
     # draws cheap blocks (mostly out of bounds) moves on to more instead of finishing early.
     next = Threads.Atomic{Int}(1)
     tasks = map(1:min(n, length(blocks))) do _
-        # The transform is built inside the task so each owns its own PROJ context for its whole
+        # The transform is built inside the task so each owns whatever state it wraps for its whole
         # lifetime, and bound in a closure of its own so the local cannot be boxed and shared.
         Threads.@spawn begin
             tf = _resolve_transform(transform)

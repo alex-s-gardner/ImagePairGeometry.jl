@@ -41,10 +41,47 @@ const CROSS_CASES = ("cross_crs", "cross_crs_3031", "cross_crs_nodata")
 
     # A CRS given any other way has no code to look up.
     @test_throws "takes EPSG codes as integers or EPSG objects" fast_transform("EPSG:3413", "EPSG:32624")
-    @test_throws "use proj_transform for those" fast_transform("EPSG:3413", "EPSG:32624")
+    @test_throws "Proj.jl among them" fast_transform("EPSG:3413", "EPSG:32624")
 
     # `inverse` is an involution, so a pair cannot be assembled inconsistently.
     @test inverse(inverse(tf.forward)) == tf.forward
+end
+
+@testset "always_xy defaults to true, and the radar path depends on it" begin
+    # The default is xy-order, not the reference's authority order. It is asserted because getting it
+    # wrong is silent: the radar path reads its forward transform as `(lon, lat, h)`, and an
+    # authority-order pair for EPSG:4326 is `(lat, lon, h)`. The solve then converges against a target
+    # on the wrong side of the planet without raising anything.
+    @test fast_transform(32632, 4326).forward.always_xy === true
+    @test FastTransform(32632, 4326).always_xy === true
+
+    # EPSG:4326 is where the choice is observable, and the default must put longitude first. UTM zone
+    # 32N covers ~6-12 deg E, so longitude is the small component and latitude the large one.
+    lon, lat, h = fast_transform(32632, 4326).forward(-242500.0, 2179000.0, 500.0)
+    @test 0.0 < lon < 12.0
+    @test 15.0 < lat < 25.0
+    @test h === 500.0
+    # ...and `always_xy = false` returns exactly that pair reversed, so the flag is doing what it says.
+    a, b, _ = fast_transform(32632, 4326; always_xy = false).forward(-242500.0, 2179000.0, 500.0)
+    @test (a, b) === (lat, lon)
+
+    # `inverse` must carry the flag, or a round trip would swap axes halfway.
+    for axy in (true, false)
+        tf = fast_transform(32632, 4326; always_xy = axy)
+        @test tf.inverse.always_xy === axy
+        x, y, z = tf.inverse(tf.forward(-242500.0, 2179000.0, 500.0)...)
+        @test x ≈ -242500.0 atol = 1e-6
+        @test y ≈ 2179000.0 atol = 1e-6
+        @test z === 500.0
+    end
+
+    # For a projected pair the flag is inert, which is why flipping the default changes nothing the
+    # reference fixtures pin.
+    for (a, b, x, y) in ((3413, 32624, -1.5e5, -2.2e6), (32624, 3413, 5.0e5, 7.0e6),
+                         (3031, 32719, -1.5e5, -2.2e6), (32719, 3031, 5.0e5, 7.0e6))
+        @test fast_transform(a, b).forward(x, y, 0.0) ===
+              fast_transform(a, b; always_xy = false).forward(x, y, 0.0)
+    end
 end
 
 @testset "the third coordinate is carried, not transformed" begin

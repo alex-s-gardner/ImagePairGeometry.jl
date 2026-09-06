@@ -10,12 +10,31 @@
 
 using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, nodata_from, block_ranges, DEFAULT_BLOCKSIZE,
-                         _resolve_transform
+                         _resolve_transform, WarmStart, SceneCenterStart
 using Proj
 using Test
 
-const ProjExt = Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)
-using .ProjExt: ProjTransformFactory
+# A per-task PROJ transform factory. The package no longer ships one — it depends on no projection
+# library — but the threading gate still needs a transform whose state cannot be shared across tasks,
+# and PROJ is exactly that: `Proj.Transformation` wraps a context PROJ documents as usable from one
+# thread at a time. Each task calls this once and owns the result.
+#
+# Contexts are deliberately never destroyed: a `Transformation`'s finalizer calls `proj_destroy` on its
+# `PJ*`, which must not run after its context is freed.
+function proj_factory(grid_crs, image_crs)
+    return function ()
+        ctx = Proj.proj_context_create()
+        # `Proj.__init__` points only the *global* context at the bundled `proj.db`, so a
+        # self-created one cannot find the database unless told where it is.
+        Proj.proj_context_set_search_paths(1, [Proj.PROJ_DATA[]], ctx)
+        # Grids fetched over the network would make results depend on what happened to be cached.
+        Proj.proj_context_set_enable_network(false, ctx)
+        g = grid_crs isa Integer ? "EPSG:$grid_crs" : grid_crs
+        i = image_crs isa Integer ? "EPSG:$image_crs" : image_crs
+        return TransformPair(Proj.Transformation(g, i; ctx, always_xy = false),
+                             Proj.Transformation(i, g; ctx, always_xy = false))
+    end
+end
 
 """Assert two results agree on every band, floats compared bitwise."""
 function assert_identical(a::PairGeometry, b::PairGeometry)
@@ -122,4 +141,34 @@ end
     @test DEFAULT_BLOCKSIZE == (512, 512)
     # A window smaller than one block is a single block, so a small grid pays nothing for blocking.
     @test length(block_ranges(CartesianIndices((1:100, 1:100)), DEFAULT_BLOCKSIZE)) == 1
+end
+
+@testset "WarmStart forfeits blocking invariance, and says so" begin
+    # The invariance above is a property of `SceneCenterStart`, not of the package: a warm start makes
+    # each point depend on its predecessor, so a blocked run and an unblocked one visit points in
+    # different sequences and get different bits. Asserted rather than only documented, because a
+    # future change that quietly restored the invariance would mean the warm start had stopped
+    # working, and a change that broke it on the *default* path would be a real bug.
+    #
+    # The radar fixture is the case with a zero-Doppler solve; the projected cases have none, so the
+    # policy is inert there and the invariance holds regardless.
+    s = setup_case("same_crs")
+    warm = GeometryParams(chip_size_0 = s.params.chip_size_0, scaling = s.params.scaling,
+                          zero_doppler_start = WarmStart())
+    src = InMemoryInputs(s.inputs, s.win)
+
+    whole = pairgeometry(s.grid, s.pair, s.inputs; transform = s.makepair(), window = s.win,
+                         params = warm, nodata = nodata_from(-32767.0))
+    blocked = pairgeometry_blocked(s.grid, s.pair, src; transform = s.makepair(),
+                                   window = s.win, blocksize = (7, 13), ntasks = 1,
+                                   params = warm, nodata = nodata_from(-32767.0))
+    # This pair is projected, so it has no zero-Doppler solve and the policy is inert -- which is the
+    # thing worth asserting here: setting it must not perturb the path it does not apply to. The
+    # radar path's actual loss of invariance is measured in `radar_geogrid.jl`, where a solve exists.
+    assert_identical(whole, blocked)
+
+    # And the default remains the default: an explicitly-constructed `SceneCenterStart` is the same
+    # object the no-keyword form produces, so no caller gets a warm start by accident.
+    @test GeometryParams().zero_doppler_start === SceneCenterStart()
+    @test GeometryParams(zero_doppler_start = WarmStart()).zero_doppler_start === WarmStart(8)
 end

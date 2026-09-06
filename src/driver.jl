@@ -77,20 +77,26 @@ function GeometryInputs(; dem, dhdx = nothing, dhdy = nothing, vx = nothing, vy 
 end
 
 """
-    GeometryParams(; chip_size_0 = 240.0, scaling = SearchRangeScaling())
+    GeometryParams(; chip_size_0 = 240.0, scaling = SearchRangeScaling(),
+                     zero_doppler_start = SceneCenterStart())
 
 Scalar parameters of the computation.
 
 - `chip_size_0`: reference chip size in meters, 240.0 in production (`testGeogrid.py:358`).
 - `scaling`: the search-range inflation, see [`SearchRangeScaling`](@ref).
+- `zero_doppler_start`: where the radar path starts each zero-Doppler solve. `SceneCenterStart()` is
+  the reference's behavior and the default; [`WarmStart`](@ref) is faster but makes the result depend
+  on the order points are visited in. Ignored on the projected path, which has no such solve.
 """
-struct GeometryParams{T<:Real}
+struct GeometryParams{T<:Real,Z<:ZeroDopplerStart}
     chip_size_0::Float64
     scaling::SearchRangeScaling{T}
+    zero_doppler_start::Z
 end
 
-GeometryParams(; chip_size_0 = 240.0, scaling = SearchRangeScaling()) =
-    GeometryParams(Float64(chip_size_0), scaling)
+GeometryParams(; chip_size_0 = 240.0, scaling = SearchRangeScaling(),
+               zero_doppler_start::ZeroDopplerStart = SceneCenterStart()) =
+    GeometryParams(Float64(chip_size_0), scaling, zero_doppler_start)
 
 """
     pairgeometry(grid, pair, inputs; transform = IdentityTransform(), window = nothing,
@@ -100,9 +106,9 @@ Geometry of `pair` at every point of `grid` covered by `window`.
 
 `grid` is the target [`MapGrid`](@ref), `pair` a [`CoregisteredPair`](@ref), and `inputs` a
 [`GeometryInputs`](@ref) whose arrays cover `window`. `transform` maps grid coordinates to image
-coordinates — an [`IdentityTransform`](@ref), a `TransformPair`, a `Proj.Transformation` (whose
-inverse is derived when only one direction is given), or a factory returning one, such as
-`ProjTransformFactory` or [`InterpolatedTransform`](@ref), which is resolved once here.
+coordinates — an [`IdentityTransform`](@ref), a [`TransformPair`](@ref), a [`FastTransform`](@ref),
+any callable following [`AbstractCoordTransform`](@ref), or a factory returning one, such as
+[`InterpolatedTransform`](@ref), which is resolved once here.
 
 `window` defaults to the whole grid intersected with the pair's footprint, via
 [`footprint_bounds`](@ref) and [`grid_window`](@ref).
@@ -281,13 +287,20 @@ function _fill_geometry!(r::PairGeometry, grid::MapGrid, coord::RadarCoordinate,
 
     out = Int32(nd.output)
 
+    # The warm-start carry, one per loop so a threaded run's tasks never share it. `nothing` on the
+    # default path, where `pointgeometry` compiles to what it did before the option existed.
+    # Bound to this scene once: the scene-midpoint satellite state is a constant of the acquisition,
+    # so interpolating it per point repeats one orbit interpolation across the whole window.
+    zd = _bind(params.zero_doppler_start, coord)
+    seed = zd isa WarmStart ? ZeroDopplerSeed() : nothing
+
     for (idx, k) in zip(win, eachindex(r.location_x, inp.dem))
         i, j = idx.I
         gx, gy = gridpoint_center(grid, i, j)
         gz = Float64(inp.dem[k])
 
         normal = has_slope ? surface_normal(inp.dhdx[k], inp.dhdy[k]) : NO_NORMAL
-        g, sp, _ = pointgeometry(tf, gx, gy, gz, coord, normal)
+        g, sp, _ = pointgeometry(tf, gx, gy, gz, coord, normal, zd, seed)
 
         # Already rounded by the solve, so no `pixel_index` step — see `PointGeometry`.
         rgind, azind = g.image_xy
