@@ -42,7 +42,13 @@ which the solve is 88% and PROJ 6% — so an ITS_LIVE-sized tile is seconds and 
 of minutes, and threading rather than transform caching is the lever that matters there.
 
 `REFERENCE.md` records the exactness standard held against the reference on each path, and every
-deliberate divergence.
+deliberate divergence. The radar path is checked on a real NISAR pair over Jakobshavn Isbræ as well as
+on the committed synthetic fixtures: 4.7 million grid points, every integer band agreeing, at 2.4× the
+compiled reference single-threaded and 14.7× on eight tasks.
+
+Reading a real product's metadata is not this package's job — it depends on no IO stack — so
+[SAR.jl](https://github.com/alex-s-gardner/SAR.jl) does that and converts an acquisition into a
+`RadarCoordinate`; see [`docs/src/radar.md`](docs/src/radar.md).
 
 ## Bounding memory
 

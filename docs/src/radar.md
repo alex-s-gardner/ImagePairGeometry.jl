@@ -58,6 +58,31 @@ There is no radar [`coregister`](@ref): `testGeogrid.py:427-470` takes every rad
 reference acquisition and the secondary only for the repeat interval, so the radar grid is image 1's
 outright.
 
+## Building one from a real product
+
+Those eleven numbers come from a product's metadata, and reading them is deliberately not this package's
+job — it depends on no IO stack, so that a caller wanting the kernel does not acquire an HDF5 or XML
+parser with it. [SAR.jl](https://github.com/alex-s-gardner/SAR.jl) reads a NISAR product and converts
+one, through an extension it loads when both packages are present:
+
+```julia
+using SAR, ImagePairGeometry
+
+reference = open_sar(url1)          # metadata only; the granule is not transferred
+secondary = open_sar(url2)
+pair = image_pair(reference, secondary)
+```
+
+`image_pair` builds the coordinate the section above builds by hand, including the incidence angle, and
+takes the repeat interval from the two sensing times. It also checks three things a hand-assembled
+coordinate can get wrong without failing: that the state vectors are uniformly spaced, that they bracket
+the acquisition — an out-of-range solve extrapolates rather than throwing — and that the azimuth times
+and the orbit are on one epoch, which is what makes `orbit_epoch_offset` a constant.
+
+For a real NISAR acquisition the offset works out to zero, because the product's epoch *is* midnight of
+the acquisition day. That is a property of the format rather than a general one, which is why it is
+computed rather than assumed.
+
 ## Two time scales
 
 `sensing_start` is seconds since midnight of the acquisition day, and the orbit is on its own epoch.
