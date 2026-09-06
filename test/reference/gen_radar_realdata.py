@@ -232,6 +232,10 @@ def run(ref_meta, sec_meta, params_dir, outdir, epsg=3413):
             'versions': {'gdal': gdal.__version__, 'isce3': isce3.__version__},
         }
         json.dump(record, open('run.json', 'w'), indent=1)
+        # The Julia comparison reads both acquisitions through SAR.jl rather than from this record, so
+        # it needs the two metadata files beside the outputs.
+        json.dump(ref_meta, open('reference_metadata.json', 'w'), indent=1)
+        json.dump(sec_meta, open('secondary_metadata.json', 'w'), indent=1)
         print(json.dumps(record['window'], indent=1))
         print(f'incidence angle : {obj.incidenceAngle} rad')
         print(f'window          : {obj.pCount} x {obj.lCount}')
