@@ -73,6 +73,7 @@ struct Orbit
     spacing::Float64
     position::Vector{SVector{3,Float64}}
     velocity::Vector{SVector{3,Float64}}
+    sepsum::NTuple{4,Float64}
 
     function Orbit(t0::Float64, spacing::Float64, position::Vector{SVector{3,Float64}},
                    velocity::Vector{SVector{3,Float64}})
@@ -85,8 +86,26 @@ struct Orbit
         isfinite(spacing) && !iszero(spacing) || throw(ArgumentError(
             "Orbit state vector spacing must be finite and nonzero, got $spacing s"))
         isfinite(t0) || throw(ArgumentError("Orbit start time must be finite, got $t0 s"))
-        return new(t0, spacing, position, velocity)
+        return new(t0, spacing, position, velocity, _sepsum(spacing))
     end
+end
+
+# Row sums of the reciprocal node separations, `sum(1/(tn[i] - tn[j]) for j != i)`, which
+# [`interpolate`](@ref) needs for both the position and velocity weights.
+#
+# A function of the spacing alone, so it is a constant of the whole orbit rather than of the bracket:
+# the nodes are `t0 + (idx + i - 2) * spacing`, so `tn[i] - tn[j]` is `(i - j) * spacing` — bitwise,
+# since both are one multiply-add and the subtraction of two such values on a uniform axis is exact.
+# That is what makes storing this equivalent to recomputing it: the sums are identical across every
+# bracket and at any epoch offset, so a query reads them instead of rebuilding them 17 times per grid
+# point. Summed over `j` in increasing order, skipping `i`, which is the order the weights need.
+_sepsum(spacing::Float64) = ntuple(4) do i
+    s = 0.0
+    for j in 1:4
+        j == i && continue
+        s += 1.0 / ((i - j) * spacing)
+    end
+    return s
 end
 
 function Orbit(; time, position, velocity)
@@ -168,16 +187,10 @@ function interpolate(o::Orbit, t::Real)
     # give a different answer.
     tn = ntuple(i -> statetime(o, idx + i - 1), 4)
 
-    # Reciprocal node separations, and their row sums. `f0` and `g0` each need the same sum over
-    # `j != i`, so it is formed once in the same order both would have used.
-    sepsum = ntuple(4) do i
-        s = 0.0
-        for j in 1:4
-            j == i && continue
-            s += 1.0 / (tn[i] - tn[j])
-        end
-        return s
-    end
+    # Row sums of the reciprocal node separations, which `f0` and `g0` both need. Read off the orbit
+    # rather than formed here: they depend only on the spacing, so they are the same on every bracket.
+    # See `_sepsum`.
+    sepsum = o.sepsum
 
     # Time offsets to the four nodes. `f1` is the offset itself; `f0` corrects the position weight
     # for the derivative constraint at each node.
