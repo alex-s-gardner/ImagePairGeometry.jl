@@ -7,7 +7,7 @@ outputs it writes are a real-data reference for the Julia radar path.
 
 No SLC is needed. `GeogridRadar` takes every radar parameter as a scalar and the orbit as a
 constructed `isce3.core.Orbit`, so the acquisition metadata harvested by
-`SARDatasets.jl/test/reference/gen_nisar_metadata.py` is enough — a few kilobytes of JSON in place of two
+`SLCDatasets.jl/test/reference/gen_nisar_metadata.py` is enough — a few kilobytes of JSON in place of two
 12 GB granules.
 
 The run sequence mirrors `testGeogrid.py:427-488`: set the radar parameters from image 1, the repeat

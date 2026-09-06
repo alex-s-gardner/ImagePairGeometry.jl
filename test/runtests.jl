@@ -27,16 +27,16 @@ include("npz.jl")
     @time @testset "interpolated transform" begin include("interpolate.jl") end
     @time @testset "FastGeoProjections transform" begin include("fastgeoprojections.jl") end
     @time @testset "Rasters IO" begin include("rasters.jl") end
-    # The SARDatasets extension. Asked by trying to import rather than by looking, since the reader is
+    # The SLCDatasets extension. Asked by trying to import rather than by looking, since the reader is
     # an unregistered weak dependency and `Pkg.test`'s sandbox is not where it is added.
     if (try
-            @eval import SARDatasets
+            @eval import SLCDatasets
             true
         catch
             false
         end)
-        @time @testset "radar types from SARDatasets" begin include("radar_sardatasets.jl") end
+        @time @testset "radar types from SLCDatasets" begin include("radar_slcdatasets.jl") end
     else
-        @info "skipping the SARDatasets extension test; SARDatasets could not be loaded"
+        @info "skipping the SLCDatasets extension test; SLCDatasets could not be loaded"
     end
 end

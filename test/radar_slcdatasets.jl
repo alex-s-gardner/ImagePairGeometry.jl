@@ -4,23 +4,23 @@
 # derived ones — the epoch offset and the incidence angle — correctly, and that a product whose orbit
 # cannot support the geometry is refused rather than extrapolated from.
 #
-# The product is rebuilt from a fixture SARDatasets commits, so this needs no granule and no network.
+# The product is rebuilt from a fixture SLCDatasets commits, so this needs no granule and no network.
 
 using ImagePairGeometry
 using ImagePairGeometry: interpolate
-using SARDatasets
+using SLCDatasets
 using Dates
 using HDF5
 using JSON3
 using Test
 
-# The fixture and its writer live in SARDatasets, next to the reader they describe.
-const SARD_TEST = joinpath(dirname(dirname(pathof(SARDatasets))), "test")
+# The fixture and its writer live in SLCDatasets, next to the reader they describe.
+const SARD_TEST = joinpath(dirname(dirname(pathof(SLCDatasets))), "test")
 include(joinpath(SARD_TEST, "fixture.jl"))
 
 mktempdir() do dir
     path = write_fixture_product(joinpath(dir, "fixture_rslc.h5"))
-    s = open_sar(path)
+    s = open_slc(path)
     coord = RadarCoordinate(s)
 
     @testset "every scalar crosses unchanged" begin
@@ -35,7 +35,7 @@ mktempdir() do dir
         # Each package has its own `LookSide`, so both are named through their module: the whole point
         # of the conversion is mapping one to the other, and an unqualified name would compare a value
         # to itself.
-        @test coord.look_side == (g.look_side == SARDatasets.LookLeft ? ImagePairGeometry.LookLeft :
+        @test coord.look_side == (g.look_side == SLCDatasets.LookLeft ? ImagePairGeometry.LookLeft :
                                   ImagePairGeometry.LookRight)
         @test coord.look_side isa ImagePairGeometry.LookSide
     end
@@ -111,14 +111,14 @@ mktempdir() do dir
 end
 
 @testset "a pair carries the reference's geometry and the interval" begin
-    # `repeat_interval` itself is SARDatasets'; what matters here is that the pair takes it and takes its
+    # `repeat_interval` itself is SLCDatasets'; what matters here is that the pair takes it and takes its
     # geometry from image 1 alone.
     mktempdir() do dir
-        a = open_sar(write_fixture_product(joinpath(dir, "a.h5")))
+        a = open_slc(write_fixture_product(joinpath(dir, "a.h5")))
         later = override(FIXTURE,
                          (:geometry => :epoch) => "seconds since 2025-12-15T00:00:00",
                          (:orbit => :epoch) => "seconds since 2025-12-15T00:00:00")
-        b = open_sar(write_fixture_product(joinpath(dir, "b.h5"), later))
+        b = open_slc(write_fixture_product(joinpath(dir, "b.h5"), later))
 
         dt = repeat_interval(a, b)
         @test dt ≈ 48 * 86400 atol = 1.0
@@ -135,7 +135,7 @@ end
         early = override(FIXTURE,
                          (:geometry => :sensing_start) => hx(0.0),
                          (:geometry => :sensing_stop) => hx(1.0))
-        s = open_sar(write_fixture_product(joinpath(dir, "early.h5"), early))
+        s = open_slc(write_fixture_product(joinpath(dir, "early.h5"), early))
         @test_throws "does not cover it" RadarCoordinate(s)
     end
 end
@@ -146,7 +146,7 @@ end
     # scales.
     mktempdir() do dir
         split = override(FIXTURE, (:orbit => :epoch) => "seconds since 2025-10-27T00:00:00")
-        s = open_sar(write_fixture_product(joinpath(dir, "split.h5"), split))
+        s = open_slc(write_fixture_product(joinpath(dir, "split.h5"), split))
         @test_throws "Converting between them is not implemented" RadarCoordinate(s)
     end
 end

@@ -1,12 +1,12 @@
-module ImagePairGeometrySARDatasetsExt
+module ImagePairGeometrySLCDatasetsExt
 
 # Building this package's radar types from a read SAR product.
 #
 # The types being constructed are this package's, so the constructors are extended here rather than in
-# the reader: `RadarCoordinate(radar)` and `CoregisteredPair(reference, secondary)` are the same
+# the reader: `RadarCoordinate(slc)` and `CoregisteredPair(reference, secondary)` are the same
 # constructors a caller already knows, taking an acquisition instead of eleven loose numbers.
 #
-# The core stays free of any IO stack — `SARDatasets` is a weak dependency, so nothing is loaded until a
+# The core stays free of any IO stack — `SLCDatasets` is a weak dependency, so nothing is loaded until a
 # caller loads it themselves.
 #
 # Three things the conversion checks rather than assumes, each of which would otherwise produce a
@@ -18,7 +18,7 @@ module ImagePairGeometrySARDatasetsExt
 #
 # The two clocks. `RadarCoordinate` measures the azimuth index against seconds-since-midnight and
 # interpolates the orbit against the orbit's own epoch, carrying `orbit_epoch_offset` between them. A
-# `RadarGeometry` reports both times against one epoch, so `SARDatasets.epoch_offset` supplies the
+# `RadarGeometry` reports both times against one epoch, so `SLCDatasets.epoch_offset` supplies the
 # constant — computed rather than assumed zero, which it happens to be for NISAR only because its epoch
 # *is* midnight of the acquisition day.
 #
@@ -27,13 +27,13 @@ module ImagePairGeometrySARDatasetsExt
 
 using ImagePairGeometry: ImagePairGeometry, Orbit, RadarCoordinate, CoregisteredPair,
                          incidence_angle, chebyshev_orbit, LookLeft, LookRight
-using SARDatasets: SARDatasets, Radar, StateVectors, orbit, repeat_interval, epoch_offset
+using SLCDatasets: SLCDatasets, SLC, StateVectors, orbit, repeat_interval, epoch_offset
 
 # The two look-side enums are distinct types with the same meaning; neither package imports the other's.
-_look(side) = side == SARDatasets.LookLeft ? LookLeft : LookRight
+_look(side) = side == SLCDatasets.LookLeft ? LookLeft : LookRight
 
 """
-    Orbit(sv::SARDatasets.StateVectors) -> Orbit
+    Orbit(sv::SLCDatasets.StateVectors) -> Orbit
 
 A product's state vectors as an interpolating orbit.
 
@@ -48,7 +48,7 @@ function ImagePairGeometry.Orbit(sv::StateVectors)
 end
 
 """
-    RadarCoordinate(s::SARDatasets.Radar; zrange = nothing, chebyshev = false) -> RadarCoordinate
+    RadarCoordinate(s::SLCDatasets.SLC; zrange = nothing, chebyshev = false) -> RadarCoordinate
 
 The acquisition as a radar coordinate.
 
@@ -62,12 +62,12 @@ identical to the default. `zrange` overrides the elevation pair the incidence an
 # Examples
 
 ```julia
-using ImagePairGeometry, SARDatasets
+using ImagePairGeometry, SLCDatasets
 
-coord = RadarCoordinate(open_sar("NISAR_L1_PR_RSLC_....h5"))
+coord = RadarCoordinate(open_slc("NISAR_L1_PR_RSLC_....h5"))
 ```
 """
-function ImagePairGeometry.RadarCoordinate(s::Radar; zrange = nothing, chebyshev::Bool = false)
+function ImagePairGeometry.RadarCoordinate(s::SLC; zrange = nothing, chebyshev::Bool = false)
     g = s.geometry
     sv = orbit(s)
 
@@ -94,7 +94,7 @@ function ImagePairGeometry.RadarCoordinate(s::Radar; zrange = nothing, chebyshev
 end
 
 """
-    CoregisteredPair(reference::SARDatasets.Radar, secondary::SARDatasets.Radar; kwargs...)
+    CoregisteredPair(reference::SLCDatasets.SLC, secondary::SLCDatasets.SLC; kwargs...)
 
 The two acquisitions as a pair: the reference's geometry, and the interval between them.
 
@@ -107,11 +107,11 @@ There is no radar [`coregister`](@ref) for the same reason: there is no overlap 
 # Examples
 
 ```julia
-pair = CoregisteredPair(open_sar(url1), open_sar(url2))
+pair = CoregisteredPair(open_slc(url1), open_slc(url2))
 pair.dt / 86400   # the repeat interval in days
 ```
 """
-function ImagePairGeometry.CoregisteredPair(reference::Radar, secondary::Radar; kwargs...)
+function ImagePairGeometry.CoregisteredPair(reference::SLC, secondary::SLC; kwargs...)
     dt = repeat_interval(reference, secondary)
     dt > 0 || throw(ArgumentError(
         "the secondary acquisition starts $(-dt) s before the reference, so the interval is not " *

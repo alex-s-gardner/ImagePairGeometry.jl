@@ -62,14 +62,14 @@ outright.
 
 Those eleven numbers come from a product's metadata, and reading one is deliberately not this package's
 job — it depends on no IO stack, so a caller wanting the kernel does not acquire an HDF5 or XML parser
-with it. [SARDatasets.jl](https://github.com/alex-s-gardner/SARDatasets.jl) reads a NISAR product, and an
+with it. [SLCDatasets.jl](https://github.com/alex-s-gardner/SLCDatasets.jl) reads a NISAR product, and an
 extension here takes the acquisition in place of the eleven numbers:
 
 ```julia
-using ImagePairGeometry, SARDatasets
+using ImagePairGeometry, SLCDatasets
 
-reference = open_sar(url1)          # metadata only; the granule is not transferred
-secondary = open_sar(url2)
+reference = open_slc(url1)          # metadata only; the granule is not transferred
+secondary = open_slc(url2)
 pair = CoregisteredPair(reference, secondary)
 ```
 
