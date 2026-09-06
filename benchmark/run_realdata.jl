@@ -12,6 +12,27 @@
 # The reference's own kernel time is in that directory's `run.json`, so the comparison needs no second
 # Python run. Results are written to `julia_run.json` beside it: the numbers cost minutes to produce
 # and prose is a poor place to keep them.
+#
+# What the reference times is `geogridRadar()`, which reads the twelve input rasters *and* writes the
+# nine outputs. So the comparable Julia run is the one that also writes them — timing against the
+# in-memory sink measures a different amount of work and overstates the difference by about 1.6x. Both
+# are reported, since the kernel-only number is what a change to the kernel moves and the matched one is
+# what a user waits for.
+#
+# One asymmetry remains: `Rasters.write` produces ZSTD-compressed tiles where the reference writes
+# uncompressed strips, a quarter of the bytes for several times the CPU. Measured on the same nine
+# outputs with the data already in memory:
+#
+#   GDAL, uncompressed, as the reference writes    0.27 s   505 MB
+#   GDAL, ZSTD tiled 256, as Rasters writes        2.12 s   118 MB
+#   Rasters, ZSTD tiled 256                        3.22 s   126 MB
+#   `GeoTIFFOutputs`, the streaming sink           5.7  s
+#
+# So the write is compression first (~1.85 s), Rasters and the per-file cube second (~1.1 s), and actual
+# IO a distant third (0.27 s). The sink costs another ~2.5 s because a block straddling a compressed tile
+# has to be decompressed and recompressed. None of that is the kernel, and the compression is not a
+# deliberate choice — `write_geotiffs` exposes no options, so a caller wanting the reference's layout
+# cannot ask for it. See the issue this links to.
 
 using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, reference_files, nodata_from, mapgrid,
@@ -25,7 +46,7 @@ using Rasters
 using StaticArrays
 
 const RA_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)
-using .RA_EXT: RasterInputs
+using .RA_EXT: RasterInputs, GeoTIFFOutputs
 
 const REALDATA_DIR = get(ENV, "IPG_REALDATA_DIR", "")
 const PARAMS_DIR = get(ENV, "IPG_PARAMS_DIR", expanduser("~/data/autorift/tests/params"))
@@ -86,9 +107,14 @@ end
 const C = build_case()
 const ND = nodata_from(vx_nodata())
 
-compute(ntasks) = pairgeometry_blocked(C.grid, C.pair, C.src;
-                                       transform = () -> fast_transform(C.grid.crs, 4326),
-                                       window = C.win, ntasks = ntasks, nodata = ND)
+# Omitting `dir` collects into memory, which is the kernel-only measurement; a `GeoTIFFOutputs`
+# matches what the reference's timer covers.
+function compute(ntasks; dir = nothing)
+    sink = dir === nothing ? ImagePairGeometry.InMemoryOutputs() : GeoTIFFOutputs(dir)
+    return pairgeometry_blocked(C.grid, C.pair, C.src;
+                                transform = () -> fast_transform(C.grid.crs, 4326),
+                                window = C.win, ntasks = ntasks, nodata = ND, sink = sink)
+end
 
 npts = length(C.win)
 @printf("grid      : %d x %d = %d points at %g m, EPSG %d\n",
@@ -144,20 +170,35 @@ end
 # Threading, not repetition: each count is timed once. The kernel over 4.7M points takes seconds, and
 # the run-to-run spread is far below the gap between task counts, so repeating it would buy noise
 # rather than precision.
-println("\n== wall clock, by task count ==")
 ref_kernel = RUN.times_s.kernel
+@printf("\n== wall clock: reading the rasters and writing the nine outputs ==\n")
+@printf("   the work the reference's own timer covers\n")
 times = Dict{String,Float64}()
 for ntasks in (1, 2, 4, 8)
     ntasks <= Threads.nthreads() || continue
+    dir = mktempdir()
     t0 = time()
-    r = compute(ntasks)
+    compute(ntasks; dir)
     el = time() - t0
     times["ntasks_$ntasks"] = el
     @printf("  ntasks=%d  %7.3f s  %6.2f us/pt  %5.2fx the reference\n",
             ntasks, el, 1e6 * el / npts, ref_kernel / el)
+    rm(dir; recursive = true, force = true)
 end
 @printf("  reference  %7.3f s  %6.2f us/pt  (compiled C++, single-threaded)\n",
         ref_kernel, 1e6 * ref_kernel / npts)
+
+@printf("\n== wall clock: kernel only, output collected in memory ==\n")
+@printf("   what a change to the kernel moves; not comparable to the reference's number\n")
+kernel_times = Dict{String,Float64}()
+for ntasks in (1, 8)
+    ntasks <= Threads.nthreads() || continue
+    t0 = time()
+    compute(ntasks)
+    el = time() - t0
+    kernel_times["ntasks_$ntasks"] = el
+    @printf("  ntasks=%d  %7.3f s  %6.2f us/pt\n", ntasks, el, 1e6 * el / npts)
+end
 
 record = Dict(
     "reference" => REF.source,
@@ -167,8 +208,10 @@ record = Dict(
     "npoints" => npts,
     "nvalid" => nvalid(r0),
     "nthreads" => Threads.nthreads(),
-    "times" => times,
+    "times_with_output" => times,
+    "times_kernel_only" => kernel_times,
     "reference_kernel_s" => ref_kernel,
+    "note" => "reference writes 505 MB uncompressed; Rasters writes ~118 MB ZSTD, about 1.7 s more CPU",
     "int_bands" => Dict(k => [v[1], v[2]] for (k, v) in int_worst),
     "float_bands" => float_worst,
     "all_int_bitwise" => all(v[1] == 0 for v in values(int_worst)),

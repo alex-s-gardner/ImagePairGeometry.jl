@@ -36,6 +36,11 @@ IPG_REALDATA_DIR=<dir> julia --project=benchmark -t 8 benchmark/run_realdata.jl
 
 It records band agreement beside the timings and writes both to `julia_run.json` in that directory.
 
+It reports two timings, because the reference's timer covers reading the twelve inputs and writing the
+nine outputs as well as the kernel. The matched number is the comparable one; the kernel-only number is
+what a change to the kernel moves. Timing the kernel alone against the reference's total overstates the
+difference by about 1.6x.
+
 None of the others depend on a projection library. `fast_transform` is the only transform the package
 ships, so it is what they measure; the reference fixtures were generated through PROJ and `test/`
 asserts against it, but nothing here does.
