@@ -8,7 +8,6 @@ using ImagePairGeometry: Orbit, RadarCoordinate, LookRight, TransformPair, MapGr
                          Ellipsoid, lonlat_to_xyz, xyz_to_lonlat, DEG2RAD, surface_normal,
                          _resolve_transform, _fill_geometry!, allocate_geometry,
                          window_geotransform, GeometryParams
-using Proj
 using StaticArrays: SVector
 
 const R, W, INC, SP, NSV = 7.0e6, 0.001078007612872506, 1.710422666954443, 10.0, 61
@@ -27,9 +26,8 @@ bench_coord() = RadarCoordinate(; orbit = ORB, starting_range = 800000.0,
     nsamples = 10000, nlines = 8000, look_side = LookRight,
     wavelength = 0.05546576, incidence_angle = 0.7371595365886898)
 
-bench_tf() = TransformPair(
-    Proj.Transformation("EPSG:32632", "EPSG:4326"; always_xy = true),
-    Proj.Transformation("EPSG:4326", "EPSG:32632"; always_xy = true))
+# The grid CRS to geodetic degrees, which is the direction the radar path reads as (lon, lat, h).
+bench_tf() = fast_transform(32632, 4326)
 
 """A grid of `n`×`n` points at 120 m over the fixture's swath, with every input band."""
 function bench_case(n::Int = 256)

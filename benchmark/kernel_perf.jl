@@ -3,6 +3,9 @@
 # The arithmetic is a few tens of nanoseconds; a real map projection is an order of magnitude more.
 # That ratio is why the identity path (grid and image sharing a CRS) is a dispatch rather than a
 # branch, and why blocking and threading target the transform rather than the arithmetic.
+#
+# `fast_transform` is the package's own transform and the only one it ships; the reference fixtures
+# were generated through PROJ, and `test/` asserts against it, but nothing here depends on it.
 
 using ImagePairGeometry
 using ImagePairGeometry: pointgeometry, surface_normal, close_slope_parallel, pixel_offset,
@@ -10,7 +13,6 @@ using ImagePairGeometry: pointgeometry, surface_normal, close_slope_parallel, pi
                          IdentityTransform, AffineTransform, TransformPair, pixel_index, inbounds,
                          spacing
 using BenchmarkTools
-using Proj
 
 const C = ProjectedCoordinate(origin = (300000.0, 7800000.0), spacing = (30.0, -30.0),
                               size = (6000, 6000))
@@ -33,10 +35,11 @@ const CASES = [
     "identity" => transform_pair(IdentityTransform()),
     "affine" => transform_pair(AffineTransform(a = 1.0001, b = 0.0002, c = 13.0,
                                                d = -0.0002, e = 0.9999, f = -7.0)),
-    "proj same CRS (noop)" => TransformPair(Proj.Transformation("EPSG:32624", "EPSG:32624"),
-                                            Proj.Transformation("EPSG:32624", "EPSG:32624")),
-    "proj UTM24N<->3413" => TransformPair(Proj.Transformation("EPSG:32624", "EPSG:3413"),
-                                          Proj.Transformation("EPSG:3413", "EPSG:32624")),
+    # Equal codes resolve to `IdentityTransform`, so a same-CRS pair costs no transform call at all
+    # rather than a no-op pipeline -- which is the point of dispatching on the type. See
+    # `fast_transform`.
+    "fast same CRS" => fast_transform(32624, 32624),
+    "fast UTM24N<->3413" => fast_transform(32624, 3413),
 ]
 
 println("Per-point cost, full computation (minimum of a benchmark sample)\n")
