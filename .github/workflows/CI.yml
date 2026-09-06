@@ -91,15 +91,18 @@ jobs:
           Pkg.activate(".")
           Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
       - uses: julia-actions/julia-buildpkg@v1
-      # `docs/Project.toml` names this package, which is unregistered, so the local copy has to be
-      # dev'd in before anything else can resolve there. `julia-docdeploy` does that itself, but not
-      # before this step needs it.
+      # `docs/Project.toml` names this package *and* FastGeoProjections, and neither can be resolved
+      # from a registry: this one is unregistered, and FastGeoProjections' registered versions predate
+      # the `[compat]` bound. So both enter the manifest in one `Pkg.add`, which is one resolve. Two
+      # calls fail whichever way they are ordered — each trips on the other's unsatisfiable entry
+      # before it has been supplied.
       - name: Use FastGeoProjections from main in docs
         shell: julia --project=docs --color=yes {0}
         run: |
           import Pkg
-          Pkg.develop(Pkg.PackageSpec(path = pwd()))
-          Pkg.add(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl", rev = "main")
+          Pkg.add([Pkg.PackageSpec(path = pwd()),
+                   Pkg.PackageSpec(url = "https://github.com/alex-s-gardner/FastGeoProjections.jl",
+                                   rev = "main")])
       - uses: julia-actions/julia-docdeploy@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
