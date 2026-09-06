@@ -168,9 +168,25 @@ function fixture_scene(case)
     fp = ImageFootprint(origin = coord.origin, spacing = coord.spacing, size = coord.size)
     pair = coregister(fp, fp; dt = Float64(case.dt))
     same = Int(img.epsg) == Int(dem.epsg)
-    transform = () -> same ? transform_pair(IdentityTransform()) :
-        TransformPair(Proj.Transformation("EPSG:$(Int(dem.epsg))", "EPSG:$(Int(img.epsg))"),
-                      Proj.Transformation("EPSG:$(Int(img.epsg))", "EPSG:$(Int(dem.epsg))"))
+    # Each call builds its own PROJ context, since a threaded run calls this once per task and PROJ
+    # documents a context as usable from one thread at a time. Building on the shared global context
+    # instead corrupts its SQLite handle, which surfaces as a `bad parameter or other API misuse` error
+    # from whichever task lost the race.
+    #
+    # Contexts are deliberately never destroyed: a `Transformation`'s finalizer calls `proj_destroy` on
+    # its `PJ*`, which must not run after its context is freed.
+    transform = function ()
+        same && return transform_pair(IdentityTransform())
+        ctx = Proj.proj_context_create()
+        # `Proj.__init__` points only the *global* context at the bundled `proj.db`, so a self-created
+        # one cannot find the database unless told where it is.
+        Proj.proj_context_set_search_paths(1, [Proj.PROJ_DATA[]], ctx)
+        # Grids fetched over the network would make results depend on what happened to be cached.
+        Proj.proj_context_set_enable_network(false, ctx)
+        g, i = "EPSG:$(Int(dem.epsg))", "EPSG:$(Int(img.epsg))"
+        return TransformPair(Proj.Transformation(g, i; ctx),
+                             Proj.Transformation(i, g; ctx))
+    end
     return (; coord, grid, pair, transform, same,
             params = GeometryParams(chip_size_0 = Float64(case.chip_size_0)))
 end

@@ -91,10 +91,18 @@ function readblock(src::InMemoryInputs, block::CartesianIndices{2})
 end
 
 """
+    supported_bands(src::InMemoryInputs, coordinate) -> Vector{Symbol}
+
+The bands the viewed inputs can produce, from the [`GeometryInputs`](@ref) they hold.
+"""
+supported_bands(src::InMemoryInputs, coordinate::AbstractImageCoordinate) =
+    supported_bands(src.inputs, coordinate)
+
+"""
     pairgeometry_blocked(grid, pair, source; transform, window = nothing,
                          blocksize = DEFAULT_BLOCKSIZE, ntasks = nothing,
-                         params = GeometryParams(), nodata = nodata_from(nothing))
-        -> PairGeometry
+                         sink = InMemoryOutputs(), params = GeometryParams(),
+                         nodata = nodata_from(nothing))
 
 [`pairgeometry`](@ref) computed block by block, optionally across threads.
 
@@ -104,6 +112,14 @@ extension's disk-backed source. `blocksize` is in grid points. `ntasks` defaults
 
 The result is bit-identical to the unblocked computation at any block size and any task count,
 because each point depends only on its own inputs.
+
+`sink` is where the output goes, and decides what this returns. The default
+[`InMemoryOutputs`](@ref) collects the whole window into one [`PairGeometry`](@ref) and returns it,
+as [`pairgeometry`](@ref) does. That is 108 bytes per grid point whatever the block size, so a grid
+large enough to need blocking on its inputs generally needs a streaming sink too:
+[`BlockCallback`](@ref), or the `Rasters` extension's `GeoTIFFOutputs`, which writes the reference's
+files as the blocks complete and returns their paths. Peak output memory is then one block per task
+rather than the whole window.
 
 `transform` may be a [`TransformPair`](@ref), an [`AbstractCoordTransform`](@ref), or — for a
 threaded run over a PROJ transform — a zero-argument function returning a fresh `TransformPair`.
@@ -115,6 +131,7 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
                               transform, window = nothing,
                               blocksize::NTuple{2,Int} = DEFAULT_BLOCKSIZE,
                               ntasks::Union{Nothing,Int} = nothing,
+                              sink::AbstractOutputSink = InMemoryOutputs(),
                               params::GeometryParams = GeometryParams(),
                               nodata::NoDataPolicy = nodata_from(nothing))
     coord = pair.coordinate
@@ -131,60 +148,63 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
     shared = (window === nothing || serial) ? _resolve_transform(transform) : nothing
     win = window === nothing ? grid_window(grid, footprint_bounds(shared, coord)) : window
 
-    result = allocate_geometry(win, window_geotransform(grid, win), grid.crs, nodata, coord)
+    ctx = SinkContext(grid, coord, win, blocksize, nodata, supported_bands(source, coord))
+    prepared = prepare_sink(sink, ctx)
     blocks = block_ranges(win, blocksize)
     n = ntasks === nothing ? min(length(blocks), Threads.nthreads()) : ntasks
 
     if n == 1
         # One task means one owner, so whatever was already resolved is reused rather than rebuilt.
         tf = shared === nothing ? _resolve_transform(transform) : shared
+        state = sink_taskstate(prepared, ctx)
         for b in blocks
-            _run_block!(result, grid, coord, pair.dt, source, tf, params, nodata, b, win)
+            _run_block!(prepared, state, ctx, pair.dt, source, tf, params, b)
         end
-        return result
+        return finish_sink(prepared)
     end
 
     # Blocks are claimed from a shared counter rather than partitioned up front, so a task that
     # draws cheap blocks (mostly out of bounds) moves on to more instead of finishing early.
     next = Threads.Atomic{Int}(1)
     tasks = map(1:min(n, length(blocks))) do _
-        # The transform is built inside the task so each owns whatever state it wraps for its whole
-        # lifetime, and bound in a closure of its own so the local cannot be boxed and shared.
-        Threads.@spawn begin
-            tf = _resolve_transform(transform)
-            while true
-                k = Threads.atomic_add!(next, 1)
-                k <= length(blocks) || break
-                _run_block!(result, grid, coord, pair.dt, source, tf, params, nodata,
-                            blocks[k], win)
-            end
-        end
+        Threads.@spawn _run_task!(prepared, ctx, pair.dt, source, transform, params, blocks, next)
     end
     foreach(wait, tasks)
-    return result
+    return finish_sink(prepared)
 end
 
-# Split out so the block loop specializes on the concrete source and transform types, and so each
-# task's writes land in a function whose locals cannot be captured across tasks.
+# One task's whole share of the work: claim blocks from `next` until they run out.
 #
-# Coordinate-agnostic: it only forwards to `_fill_geometry!`, which dispatches. Blocking a radar run
-# is the same operation for the same reason — every point is independent of every other.
-function _run_block!(result::PairGeometry, grid::MapGrid, coord::AbstractImageCoordinate, dt::Float64,
-                     source::AbstractInputSource, tf::TransformPair, params::GeometryParams,
-                     nodata::NoDataPolicy, block::CartesianIndices{2}, win::CartesianIndices{2})
-    inputs = readblock(source, block)
-    off = first(win).I .- 1
-    local_block = CartesianIndices((block.indices[1] .- off[1], block.indices[2] .- off[2]))
-    # Each block writes a disjoint region of the result, so no synchronization is needed.
-    view_of = _block_view(result, local_block)
-    _fill_geometry!(view_of, grid, coord, dt, inputs, tf, params, nodata, block)
+# A function rather than a `begin` block inside the spawn, because the per-task transform and sink
+# state must not be shared. Written inline, the body of the enclosing `map` closure is *one* closure
+# object for every task, so a local assigned there is boxed once and every task reads whichever
+# assignment landed last — several tasks then share one PROJ context and one block buffer. Each call
+# here gets a frame of its own, which is what makes ownership per task. `test/blocks.jl` asserts it
+# through a sink that stamps its buffer.
+function _run_task!(prepared, ctx::SinkContext, dt::Float64, source::AbstractInputSource, transform,
+                    params::GeometryParams, blocks::Vector{<:CartesianIndices{2}},
+                    next::Threads.Atomic{Int})
+    tf = _resolve_transform(transform)
+    state = sink_taskstate(prepared, ctx)
+    while true
+        k = Threads.atomic_add!(next, 1)
+        k <= length(blocks) || break
+        _run_block!(prepared, state, ctx, dt, source, tf, params, blocks[k])
+    end
     return nothing
 end
 
-# A `PairGeometry` whose bands view the given region of `r`'s. Writing through it writes `r`.
-function _block_view(r::PairGeometry, local_block::CartesianIndices{2})
-    ints = ntuple(i -> view(getfield(r, INT_BANDS[i]), local_block), length(INT_BANDS))
-    floats = ntuple(i -> view(getfield(r, FLOAT_BANDS[i]), local_block), length(FLOAT_BANDS))
-    return PairGeometry(ints..., floats..., r.geotransform, r.crs, local_block, r.nodata,
-                        r.coordinate)
+# Split out so the block loop specializes on the concrete source, transform and sink types, and so
+# each task's writes land in a function whose locals cannot be captured across tasks.
+#
+# Coordinate-agnostic: it only forwards to `_fill_geometry!`, which dispatches. Blocking a radar run
+# is the same operation for the same reason — every point is independent of every other.
+function _run_block!(prepared, state, ctx::SinkContext, dt::Float64,
+                     source::AbstractInputSource, tf::TransformPair, params::GeometryParams,
+                     block::CartesianIndices{2})
+    inputs = readblock(source, block)
+    dest = blockdest(prepared, state, ctx, block)
+    _fill_geometry!(dest, ctx.grid, ctx.coordinate, dt, inputs, tf, params, ctx.nodata, block)
+    commitblock!(prepared, state, ctx, block, dest)
+    return nothing
 end

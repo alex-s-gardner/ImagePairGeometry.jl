@@ -56,6 +56,10 @@ export PairGeometry, GeometryInputs, GeometryParams, SearchRangeScaling
 export ZeroDopplerStart, SceneCenterStart, WarmStart
 export pairgeometry, pairgeometry_blocked, npoints, nvalid, velocity_conversion
 export AbstractInputSource, InMemoryInputs, readblock, block_ranges
+# The sink protocol. The five functions are exported because implementing a sink means extending all
+# five, and `supported_bands` because a sink creating storage per band needs it.
+export AbstractOutputSink, InMemoryOutputs, BlockCallback, SinkContext, supported_bands
+export prepare_sink, sink_taskstate, blockdest, commitblock!, finish_sink
 export AbstractTransformFactory
 export InterpolatedTransform, CoordLattice, build_lattice, latticesize
 export LatticeInterpolation, NearestNode, Bilinear, Bicubic
@@ -87,6 +91,9 @@ include("kernel/outputs.jl")
 include("nodata.jl")
 include("result.jl")
 include("driver.jl")
+# After `driver.jl`: `supported_bands` reads a `GeometryInputs`, and `SinkContext` holds a
+# `NoDataPolicy` and a `MapGrid`.
+include("sink.jl")
 include("blocks.jl")
 # After `blocks.jl`: `InterpolatedTransform` subtypes `AbstractTransformFactory`, so that type must
 # exist first.

@@ -39,6 +39,21 @@ for bs in ((n, n), (128, 128), (64, 64))
     @printf("blocksize %s: %8.1f ms  %8.2f MiB  %6d allocs\n", bs, m.time/1e6, m.memory/2^20, m.allocs)
 end
 
+println("\n== streaming vs collecting the result ==")
+# The bound a streaming sink buys: output memory is one block per task rather than the whole window.
+# A callback that only counts is the sink with no consumer cost of its own, so what this measures is
+# the buffer reuse and the refill.
+counted = Threads.Atomic{Int}(0)
+for bs in ((128, 128), (64, 64))
+    b = @benchmark pairgeometry_blocked($c.grid, $c.pair, $src; transform = $c.tf,
+        window = $c.win, blocksize = $bs, ntasks = 1, nodata = nodata_from(0.0),
+        sink = BlockCallback((blk, g) -> Threads.atomic_add!($counted, nvalid(g)))
+        ) samples=3 evals=1 seconds=90
+    m = minimum(b)
+    @printf("stream blocksize %s: %8.1f ms  %8.2f MiB  %6d allocs (bound %.2f MiB)\n",
+            bs, m.time/1e6, m.memory/2^20, m.allocs, 108 * prod(bs) / 2^20)
+end
+
 println("\n== threading scaling (nthreads = $(Threads.nthreads())) ==")
 for nt in (1, 2, 4, 8)
     nt > Threads.nthreads() && continue

@@ -17,6 +17,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Streaming the output" => "streaming.md",
         "Radar geometry" => "radar.md",
     ],
 )
