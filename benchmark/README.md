@@ -13,7 +13,9 @@ cost and its breakdown, the statistical profile, storage scaling, and the accura
 sweeps behind `GEO2RDR_ITERATIONS`, `RANGE_DOPPLER_ITERATIONS` and `WarmStart`.
 
 `run_chebyshev.jl` is the gate on `chebyshev_orbit`: the interpolant's accuracy over the whole orbit
-domain, the cost on a window, and every output band against the default Hermite path. The band
+domain, the cost on a window, and every output band against the default Hermite path. Its accuracy
+figure depends on the orbit by six orders of magnitude, so with `IPG_REALDATA_DIR` set it measures a
+real orbit alongside the analytic one. The band
 comparison is the part that decides whether the option is safe to offer, so a change touching either
 interpolant should re-run it.
 

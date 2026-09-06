@@ -148,10 +148,20 @@ however fast interpolation becomes.
 
 Every integer band stays bitwise and blocking invariance is kept — the interpolant is still a pure
 function of time, so points remain independent, which is the difference from [`WarmStart`](@ref). What
-is given up is the interpolant's own bitwise position agreement with isce3: position moves by up to
-1.2e-8 m, which reaches an output as roughly 1e-9 of a pixel and leaves the float bands within 6.8e-9
-relative. The default `Orbit` is unchanged, and `REFERENCE.md` records why the strict path stays the
-default despite the negligible magnitude.
+is given up is the interpolant's own bitwise position agreement with isce3.
+
+How much position moves depends on the orbit, by six orders of magnitude, so both figures are worth
+stating. On the analytic circular orbit the fixtures use it is 1.2e-8 m, reaching an output as roughly
+1e-9 of a pixel and leaving the float bands within 6.8e-9 relative. On a **real** orbit at the same
+spacing and state vector count it is 1.0e-2 m: an eight-term series fits a perfect circle far better
+than it fits a perturbed trajectory, and a real one is perturbed — a NISAR granule's radius varies by
+about a kilometer over 340 s, and its reported velocities differ from its own position derivative by
+0.13 m/s. A centimeter is still 1e-2 of a NISAR range sample and cannot move a rounded index, so the
+option remains safe to offer; it is the analytic figure that is unrepresentative rather than the
+option that is worse than described. `benchmark/run_chebyshev.jl` measures both.
+
+The default `Orbit` is unchanged, and `REFERENCE.md` records why the strict path stays the default
+despite the negligible magnitude.
 
 ## API
 

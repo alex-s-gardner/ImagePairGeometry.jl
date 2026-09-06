@@ -320,6 +320,17 @@ times spanning the whole orbit domain, including the clamped brackets at either 
 | position | 1.2e-8 m | 93 / 20001 |
 | velocity | 1.4e-9 m/s | 0 / 20001 |
 
+Those are the numbers on the fixtures' **analytic circular** orbit. On a **real** orbit at the same 10 s
+spacing and state vector count they are six orders larger — 1.0e-2 m and 1.2e-2 m/s, measured on the
+NISAR granule behind the real-data comparison — because an eight-term series fits a perfect circle far
+better than it fits a perturbed trajectory, and a real one is perturbed: that granule's radius varies by
+1033 m over 340 s, and its reported velocities differ from its own position derivative by 0.13 m/s.
+
+A centimeter is 1e-2 of a NISAR range sample and cannot move a rounded index, so this does not change
+whether the option is safe — but the analytic figure alone would understate what a caller sees, so both
+are recorded. `benchmark/run_chebyshev.jl` measures both, the real-orbit case when `IPG_REALDATA_DIR`
+names a real-data reference directory.
+
 The error is the coefficient recovery, not the summation. Clenshaw is backward stable; recovering eight
 coefficients at Earth-radius magnitudes carries about 1e-15 relative, which is 1e-8 m. This is why the
 faster basis is also the less accurate one — a monomial basis by Horner recovers position twice as
