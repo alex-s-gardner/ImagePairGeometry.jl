@@ -32,7 +32,7 @@
 # IO a distant third (0.27 s). The sink costs another ~2.5 s because a block straddling a compressed tile
 # has to be decompressed and recompressed. None of that is the kernel, and the compression is not a
 # deliberate choice — `write_geotiffs` exposes no options, so a caller wanting the reference's layout
-# cannot ask for it. See the issue this links to.
+# cannot ask for it; see #21.
 
 using ImagePairGeometry
 using ImagePairGeometry: INT_BANDS, FLOAT_BANDS, reference_files, nodata_from, mapgrid,
