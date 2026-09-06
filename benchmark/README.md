@@ -23,6 +23,17 @@ agreement with isce3, which loop-invariant hoists are worth taking once inlined,
 behind storing the Hermite separation sums on the `Orbit`. A change that revisits any of them should
 re-run it rather than trust the number in prose.
 
-None of these depend on a projection library. `fast_transform` is the only transform the package
+`run_realdata.jl` is the exception to everything above: it measures a real NISAR acquisition over the
+ITS_LIVE 120 m grid rather than synthetic inputs, so it needs data on disk and does not run standalone.
+`test/reference/gen_radar_realdata.py` produces the reference outputs it compares against and the
+`run.json` holding the reference's own kernel time, so the comparison needs no second Python run:
+
+```
+IPG_REALDATA_DIR=<dir> julia --project=benchmark -t 8 benchmark/run_realdata.jl
+```
+
+It records band agreement beside the timings and writes both to `julia_run.json` in that directory.
+
+None of the others depend on a projection library. `fast_transform` is the only transform the package
 ships, so it is what they measure; the reference fixtures were generated through PROJ and `test/`
 asserts against it, but nothing here does.
