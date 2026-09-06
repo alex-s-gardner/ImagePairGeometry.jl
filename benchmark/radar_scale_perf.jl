@@ -1,8 +1,8 @@
 # What a radar run costs at scale, and where the time goes.
 #
-# The projected path's cost is dominated by PROJ — three calls per point, which is why
-# `InterpolatedTransform` exists. The radar path's is dominated by the solve instead, and this measures
-# the ratio that decides whether the same trick is worth applying here.
+# The projected path's cost is dominated by the coordinate transform — three calls per point, which is
+# why `InterpolatedTransform` exists. The radar path's is dominated by the solve instead, and this
+# measures the ratio that decides whether the same trick is worth applying here.
 
 using ImagePairGeometry
 using ImagePairGeometry: Ellipsoid, Orbit, RadarCoordinate, LookRight, incidence_angle,
@@ -11,7 +11,6 @@ using ImagePairGeometry: Ellipsoid, Orbit, RadarCoordinate, LookRight, incidence
                          pairgeometry_blocked, pointgeometry, surface_normal, nodata_from,
                          interpolate, rdr2geo, geo2rdr, orbit_midtime, midtime, _range_doppler
 using BenchmarkTools
-using Proj
 using StaticArrays: SVector
 
 const EL = Ellipsoid()
@@ -39,9 +38,8 @@ const IA = incidence_angle(; orbit = ORB, RKW...)
 const RC = RadarCoordinate(; orbit = ORB, incidence_angle = IA, RKW...)
 const PAIR = CoregisteredPair(RC; dt = 6 * 86400.0)
 
-"""A fresh PROJ pair. A thunk, since a threaded run needs one context per task."""
-projpair() = TransformPair(Proj.Transformation("EPSG:32632", "EPSG:4326"; always_xy = true),
-                           Proj.Transformation("EPSG:4326", "EPSG:32632"; always_xy = true))
+"""The grid CRS to geodetic degrees. Immutable and stateless, so one object serves every task."""
+projpair() = fast_transform(32632, 4326)
 
 """A grid of `n`×`n` points at `spacing` m, centred on the swath."""
 function scene(n, spacing)
@@ -65,7 +63,7 @@ let
     llh = rdr2geo(ORB, EL, 305.0, SR + 4000 * DR; height = 500.0, wavelength = WVL,
                   side = LookRight)
     lx, ly, lz = rad2deg(llh[1]), rad2deg(llh[2]), llh[3]
-    gxx, gyy = projpair().inverse(lx, ly)
+    gxx, gyy, _ = projpair().inverse(lx, ly, lz)
     tf = projpair()
     nrm = surface_normal(0.02, -0.01)
     pm, vm = interpolate(ORB, orbit_midtime(RC))
@@ -81,11 +79,11 @@ let
 
     println(rpad("stage", 30), lpad("ns", 10), lpad("share", 9))
     for (nm, v) in (("pointgeometry (whole)", point), ("  geo2rdr", solve),
-                    ("  range-Doppler solve", rdop), ("  one PROJ call", proj))
+                    ("  range-Doppler solve", rdop), ("  one transform call", proj))
         println(rpad(nm, 30), lpad(round(v; digits = 1), 10),
                 lpad(startswith(nm, " ") ? "$(round(100v / point; digits = 1))%" : "", 9))
     end
-    println("\nPROJ is ", round(100 * 3 * proj / point; digits = 2),
+    println("\nThe transform is ", round(100 * 3 * proj / point; digits = 2),
             "% of a radar point (three calls), against ~95% of a projected one.")
     println("So the lattice trick that wins on the projected path has almost nothing to")
     println("take here: the solve is the cost, and it cannot be interpolated away without")
@@ -139,7 +137,3 @@ let
     println("\nSo a production tile is seconds and a continental grid is minutes, both")
     println("without a lattice. Threading is the lever that matters here.")
 end
-
-# PROJ's atexit teardown aborts when transformations built in this process are still reachable, so the
-# process is ended before it runs. Nothing above depends on cleanup.
-exit(0)

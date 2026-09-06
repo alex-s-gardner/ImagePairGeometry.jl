@@ -6,19 +6,18 @@
 # arrays could not show.
 using ImagePairGeometry
 using ImagePairGeometry: nodata_from, AbstractInputSource
-using Proj, Printf
-const ProjExt = Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)
-using .ProjExt: ProjTransformFactory
+using Printf
 
 const COORD = ProjectedCoordinate(origin=(300000.0,7800000.0), spacing=(30.0,-30.0), size=(8000,8000))
-const GRID = let p = ProjTransformFactory(3413,32624)()
+# Stateless and immutable, so one object serves every task and no factory is needed.
+const TF = fast_transform(3413, 32624)
+const GRID = let p = TF
     b = footprint_bounds(p, COORD); sp=120.0
     x0=floor(b.X[1]/sp-4)*sp; y1=ceil(b.Y[2]/sp+4)*sp
     nx=Int(ceil((b.X[2]-x0)/sp))+8; ny=Int(ceil((y1-b.Y[1])/sp))+8
     MapGrid(geotransform=(x0,sp,0.0,y1,0.0,-sp), size=(nx,ny), crs=3413)
 end
-const FAC = ProjTransformFactory(3413,32624)
-const WIN = grid_window(GRID, footprint_bounds(FAC(), COORD))
+const WIN = grid_window(GRID, footprint_bounds(TF, COORD))
 const FP = ImageFootprint(origin=COORD.origin, spacing=COORD.spacing, size=COORD.size)
 const PAIR = coregister(FP, FP; dt=91*86400.0)
 
@@ -33,11 +32,11 @@ end
 rss() = Sys.maxrss() / 2^20
 @printf("window %d x %d = %.2f M points\n", size(WIN)..., length(WIN)/1e6)
 @printf("11 input rasters materialized would be %.0f MiB\n", 11*length(WIN)*8/2^20)
-pairgeometry_blocked(GRID, PAIR, Synth(); transform=FAC, window=WIN, blocksize=(256,256), ntasks=1, nodata=nodata_from(-32767.0))
+pairgeometry_blocked(GRID, PAIR, Synth(); transform=TF, window=WIN, blocksize=(256,256), ntasks=1, nodata=nodata_from(-32767.0))
 GC.gc(); base = rss()
 @printf("\n%-12s %12s\n", "blocksize", "peak RSS MiB")
 for bs in ((128,128),(256,256),(512,512),(2048,2048))
     GC.gc()
-    pairgeometry_blocked(GRID, PAIR, Synth(); transform=FAC, window=WIN, blocksize=bs, ntasks=1, nodata=nodata_from(-32767.0))
+    pairgeometry_blocked(GRID, PAIR, Synth(); transform=TF, window=WIN, blocksize=bs, ntasks=1, nodata=nodata_from(-32767.0))
     @printf("%-12s %12.0f\n", string(bs), rss())
 end

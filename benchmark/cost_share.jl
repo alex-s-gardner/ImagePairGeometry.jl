@@ -10,12 +10,8 @@ using ImagePairGeometry
 using ImagePairGeometry: nodata_from
 using BenchmarkTools
 using Printf
-using Proj
 
-const PROJ_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryProjExt)
-using .PROJ_EXT: ProjTransformFactory
-
-_pair_of(f::ProjTransformFactory) = f()
+_pair_of(f::Function) = f()
 _pair_of(t) = transform_pair(t)
 
 """A grid covering the image's footprint under `tf`, with inputs for every band."""
@@ -57,31 +53,32 @@ function measure(name, tf; scene = nothing)
 end
 
 println("Per-point cost by transform, serial\n")
-identity_ns = measure("identity (0 PROJ/pt)", IdentityTransform())
-proj_ns = measure("cross-CRS (3 PROJ/pt)", ProjTransformFactory(3413, 32624))
+identity_ns = measure("identity (0 calls/pt)", IdentityTransform())
+cross_ns = measure("cross-CRS (3 calls/pt)", fast_transform(3413, 32624))
 
 # The lattice modes, against the exact cross-CRS run above. `:hybrid` keeps one call per point, so its
 # speedup saturates; `:full` keeps paying as the lattice coarsens. Accuracy per mode and spacing is in
 # `docs/interpolated-transform.md`.
 println()
-let factory = ProjTransformFactory(3413, 32624), s = setup(factory)
+let factory = fast_transform(3413, 32624), s = setup(factory)
     for mode in (:hybrid, :full), lattice in (2, 4, 8), kern in (Bilinear(), Bicubic())
         tf = InterpolatedTransform(factory, s.grid, s.pair; lattice, mode,
                                    interpolation = kern, window = s.win)
         ns = measure("$mode lattice=$lattice $(nameof(typeof(kern)))", tf; scene = s)
-        @printf("%-24s %.2fx vs exact\n", "", proj_ns / ns)
+        @printf("%-24s %.2fx vs exact\n", "", cross_ns / ns)
     end
 end
 
-@printf("\nPROJ share of a cross-CRS run : %5.1f%%\n", 100 * (proj_ns - identity_ns) / proj_ns)
+@printf("\ntransform share of a cross-CRS run : %5.1f%%\n",
+        100 * (cross_ns - identity_ns) / cross_ns)
 @printf("Amdahl ceiling on optimizing everything else : %.2fx\n",
-        proj_ns / (proj_ns - identity_ns))
+        cross_ns / (cross_ns - identity_ns))
 println("""
-Reading: the projection library dominates, so throughput work belongs in making *fewer* transform
-calls — which is what dispatching on `IdentityTransform` does for a same-CRS pair — rather than in
-tuning the arithmetic around them. Two candidates were measured and rejected: batching through
-`proj_trans_generic` is 1.00x (the cost is the projection math, not the call), and PROJ gains nothing
-from sequential over random points, so a row-ordered sweep buys nothing.
+Reading: the transform dominates, so throughput work belongs in making *fewer* transform calls —
+which is what dispatching on `IdentityTransform` does for a same-CRS pair — rather than in tuning the
+arithmetic around them. Two candidates were measured against a PROJ-backed transform and rejected,
+and neither depends on the backend: batching through `proj_trans_generic` was 1.00x, because the cost
+is the projection math rather than the call, and a row-ordered sweep buys nothing over random points.
 
 Interpolating the transform on a coarse lattice is the approach that pays, and `InterpolatedTransform`
 is it. `:hybrid` keeps the forward transform exact, so the location bands stay bitwise, and saturates
