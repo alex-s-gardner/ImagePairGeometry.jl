@@ -198,11 +198,14 @@ struct OwnershipProbe <: ImagePairGeometry.AbstractOutputSink
     commits::Threads.Atomic{Int}
     # Buffer address to the ids of every state that handed out a block from it.
     owners::Dict{UInt,Set{Int}}
+    # Every buffer built, held so none is collected: an address identifies a buffer only while it is
+    # alive, and a collected one's address can be handed to a later task's allocation.
+    retained::Vector{Any}
     lk::ReentrantLock
 end
 
 OwnershipProbe() = OwnershipProbe(Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
-                                  Dict{UInt,Set{Int}}(), ReentrantLock())
+                                  Dict{UInt,Set{Int}}(), Any[], ReentrantLock())
 
 struct ProbeState{G}
     id::Int
@@ -216,7 +219,11 @@ function ImagePairGeometry.sink_taskstate(p::OwnershipProbe, ctx::ImagePairGeome
         CartesianIndices(min.(ctx.blocksize, size(ctx.window))),
         ImagePairGeometry.window_geotransform(ctx.grid, ctx.window), ctx.grid.crs, ctx.nodata,
         ctx.coordinate)
-    return ProbeState(Threads.atomic_add!(p.built, 1) + 1, buffer)
+    id = Threads.atomic_add!(p.built, 1) + 1
+    lock(p.lk) do
+        push!(p.retained, buffer)
+    end
+    return ProbeState(id, buffer)
 end
 
 ImagePairGeometry.blockdest(::OwnershipProbe, state::ProbeState,
@@ -247,14 +254,18 @@ ImagePairGeometry.finish_sink(p::OwnershipProbe) = p
                                  blocksize = (8, 8), ntasks = nt, params = s.params,
                                  nodata = nodata_from(-32767.0), sink = OwnershipProbe())
         @testset "ntasks $nt" begin
-            ntasks_run = min(nt, nblocks)
+            spawned = min(nt, nblocks)
             @test p.commits[] == nblocks
-            # One state per task, one buffer per state, and no buffer reached from two states. A single
-            # boxed local in the spawn loop gives several tasks the same state, and the only symptom is
-            # blocks holding each other's points.
-            @test p.built[] == ntasks_run
-            @test length(p.owners) == ntasks_run
+            @test p.built[] == spawned
+            # No buffer reached from two states: that, not the count, is the property. A single boxed
+            # local in the spawn loop gives several tasks the same state, and the only symptom is blocks
+            # holding each other's points.
             @test all(==(1), length.(values(p.owners)))
+            # How many tasks contribute a buffer is a scheduling outcome, not a contract. On one thread
+            # the first task drains the queue before the rest start, so they build a state, find no work
+            # and exit -- which is why this is bounded rather than equal to the task count.
+            @test 1 <= length(p.owners) <= spawned
+            Threads.nthreads() == 1 && @test length(p.owners) == 1
         end
     end
 end
