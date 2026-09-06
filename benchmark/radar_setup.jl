@@ -21,7 +21,7 @@ end
 
 const ORB = bench_orbit()
 
-bench_coord() = RadarCoordinate(; orbit = ORB, starting_range = 800000.0,
+bench_coord(orbit = ORB) = RadarCoordinate(; orbit, starting_range = 800000.0,
     dr = 2.329562114715323, sensing_start = 300.0, prf = 486.4863103,
     nsamples = 10000, nlines = 8000, look_side = LookRight,
     wavelength = 0.05546576, incidence_angle = 0.7371595365886898)
@@ -30,8 +30,8 @@ bench_coord() = RadarCoordinate(; orbit = ORB, starting_range = 800000.0,
 bench_tf() = fast_transform(32632, 4326)
 
 """A grid of `n`×`n` points at 120 m over the fixture's swath, with every input band."""
-function bench_case(n::Int = 256)
-    coord = bench_coord()
+function bench_case(n::Int = 256; orbit = ORB)
+    coord = bench_coord(orbit)
     pair = CoregisteredPair(coord; dt = 518400.0)
     # The fixture's 48x48 window at 500 m; refine the spacing to reach n points inside the swath.
     spacing = 500.0 * 48 / n

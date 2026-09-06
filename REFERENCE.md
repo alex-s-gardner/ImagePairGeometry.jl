@@ -290,6 +290,59 @@ spacing. Even at 10 km the gap is 1.3 s of azimuth time against the roughly 60 s
 from, so the warm guess is still more than an order of magnitude better. A sparse pass computed for
 later interpolation onto a finer grid is therefore as safe as a dense one.
 
+### `chebyshev_orbit` is available and off by default
+
+`chebyshev_orbit(orbit)` returns the same acquisition with its interpolant tabulated per bracket as a
+Chebyshev series, evaluated by Clenshaw summation. Measured at 1.30–1.37× of a whole radar window,
+1.64× of a `geo2rdr`, and 2.2× of one interpolation.
+
+As with `WarmStart` this is a divergence a caller opts into. A plain `Orbit` is unchanged and
+`interpolate` dispatches on the type, so every fixture assertion and every other claim in this document
+describes the default Hermite path.
+
+**Why it is faster.** Each bracket's interpolant is exactly a degree-7 polynomial — four state vectors
+constraining position and velocity each, eight conditions — but `interpolate` rebuilds it from scratch
+on every call: the node times, the reciprocal separations, the Lagrange basis and its derivative, about
+a hundred flops of weight construction to produce six numbers. A grid point costs seventeen of those
+calls (sixteen in the zero-Doppler solve, one for the along-track step), and adjacent points fall in the
+same bracket. Tabulating eight coefficients per bracket replaces the weights with eight fused
+multiply-adds.
+
+The ceiling is Amdahl's: `geo2rdr` is 37% of a point, so no interpolator change reaches 1.6× of a point
+however fast interpolation becomes.
+
+**What it costs.** Not the bitwise position agreement with isce3 that this document records under
+*Radar numerics agreement* — that is the property being spent. Against the Hermite form over 20001
+times spanning the whole orbit domain, including the clamped brackets at either edge:
+
+| | worst difference | bitwise |
+|---|---|---|
+| position | 1.2e-8 m | 93 / 20001 |
+| velocity | 1.4e-9 m/s | 0 / 20001 |
+
+The error is the coefficient recovery, not the summation. Clenshaw is backward stable; recovering eight
+coefficients at Earth-radius magnitudes carries about 1e-15 relative, which is 1e-8 m. This is why the
+faster basis is also the less accurate one — a monomial basis by Horner recovers position twice as
+accurately, at 6.5e-9 m and 1345/20001 bitwise, and is slower at 1.27× of a `geo2rdr` against
+Chebyshev's 1.64×.
+
+**What reaches an output.** Propagated through the zero-Doppler solve: 1.3e-9 azimuth lines and
+8.0e-10 range samples, about 1e-9 of a pixel and far below any rounding boundary. Measured on the
+`utm32n` fixture case over a 47×48 window, every one of the eleven integer bands is bitwise identical
+and the float bands differ by at most 6.8e-9 relative, four orders inside the 2e-4 those bands are held
+to versus isce3.
+
+**Blocking invariance survives**, which is what separates this option from `WarmStart`. The interpolant
+remains a pure function of time, so points stay independent and a blocked run still matches a
+whole-window one bitwise on every band. `test/radar_geogrid.jl` asserts that alongside the band
+comparison.
+
+**Why it is opt-in even so.** The magnitude is negligible; the standard is not. The bitwise position
+agreement is what the *Exactness standard* above and the blocking assertions in `test/blocks.jl` rest
+on, so surrendering it globally would leave every later radar change to be debugged against a tolerance
+rather than an equality. Offering it as a per-orbit choice keeps the strict default available as the
+thing new work is checked against. Re-measure with `benchmark/run_chebyshev.jl`.
+
 ### The range-Doppler loop converts forward once, not per iteration
 
 `geogridRadar.cpp:1053-1060` does a full ellipsoid round trip inside the loop: ECEF to geodetic,
@@ -549,6 +602,10 @@ assertion: the constant dominates either way.
 | Hermite position | bitwise on 10 of 11 cases, else 1 ULP | contraction in isce3's accumulation |
 | Hermite velocity | 4e-14 relative | contraction, amplified by cancellation in `g0` |
 | `rdr2geo` | **3.6e-8 m on the ground** | the datum, `atan2`, and the above, propagated |
+
+The two Hermite rows describe the default interpolant. An orbit built by `chebyshev_orbit` gives up the
+position row deliberately — see "`chebyshev_orbit` is available and off by default" under *Deliberate
+divergences*.
 
 Every band of the `radar geogrid vs reference` fixture still matches — 172 integer assertions and
 46,854 float ones — so the datum difference moves no rounded index.

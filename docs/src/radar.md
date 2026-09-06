@@ -130,6 +130,29 @@ Grid spacing does not change what the warm start needs: measured from 120 m to 1
 flat and no index moves, so a **sparse pass for later interpolation** onto a finer grid is as safe as
 a dense one.
 
+## Trading the interpolant's exactness for speed
+
+[`chebyshev_orbit`](@ref) tabulates the orbit interpolant per bracket as a Chebyshev series and
+evaluates it by Clenshaw summation, instead of rebuilding the Hermite weights on each of the seventeen
+interpolations a grid point costs — about **1.3×** on a radar window:
+
+```julia
+orbit = chebyshev_orbit(Orbit(; time = t, position = pos, velocity = vel))
+coord = RadarCoordinate(; orbit, starting_range, dr, sensing_start, prf,
+                        nsamples, nlines, look_side, wavelength, incidence_angle)
+```
+
+The option is carried by the orbit's type, so `interpolate` dispatches on it and nothing else in the
+pipeline changes. `geo2rdr` is 37% of a point, which caps any interpolator change near 1.6× of a point
+however fast interpolation becomes.
+
+Every integer band stays bitwise and blocking invariance is kept — the interpolant is still a pure
+function of time, so points remain independent, which is the difference from [`WarmStart`](@ref). What
+is given up is the interpolant's own bitwise position agreement with isce3: position moves by up to
+1.2e-8 m, which reaches an output as roughly 1e-9 of a pixel and leaves the float bands within 6.8e-9
+relative. The default `Orbit` is unchanged, and `REFERENCE.md` records why the strict path stays the
+default despite the negligible magnitude.
+
 ## API
 
 ```@autodocs

@@ -40,6 +40,9 @@ export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
 # because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
 export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
+# Opt-in, and not bitwise: `chebyshev_orbit` trades the interpolant's position agreement for about
+# 1.17x of a radar point. See its docstring and `REFERENCE.md`.
+export chebyshev_orbit
 # Both solves run a fixed iteration count chosen against SAR geometry -- orbital altitude for one,
 # target latitude for the other -- so a caller working outside that range needs to be able to check
 # them. See `GEO2RDR_ITERATIONS` and `RANGE_DOPPLER_ITERATIONS`.

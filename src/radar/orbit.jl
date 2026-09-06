@@ -31,6 +31,30 @@ function Base.showerror(io::IO, e::OrbitDomainError)
 end
 
 """
+    ChebyshevCoefficients
+
+The orbit interpolant tabulated per bracket as a Chebyshev series, for [`chebyshev_orbit`](@ref).
+
+# Fields
+- `position`, `velocity`: eight coefficients per bracket, one entry per bracket of the orbit.
+- `tmid`: the time each bracket's series is centered on.
+- `half`: half-width of a bracket in seconds, `1.5 * spacing`, which maps a time into `[-1, 1]`.
+
+A bracket's interpolant is a degree-7 polynomial — four state vectors constraining position and
+velocity each — so eight coefficients represent it exactly rather than approximately. What is not exact
+is recovering them: see [`chebyshev_orbit`](@ref) for the measured cost.
+
+Built once per orbit. Adjacent grid points fall in the same bracket, so the table is read rather than
+rebuilt on every one of the seventeen interpolations a grid point costs.
+"""
+struct ChebyshevCoefficients
+    position::Vector{NTuple{8,SVector{3,Float64}}}
+    velocity::Vector{NTuple{8,SVector{3,Float64}}}
+    tmid::Vector{Float64}
+    half::Float64
+end
+
+"""
     Orbit(; time, position, velocity)
     Orbit(t0, spacing, position, velocity)
 
@@ -68,15 +92,15 @@ julia> length(orbit), starttime(orbit), stoptime(orbit)
 (5, 0.0, 40.0)
 ```
 """
-struct Orbit
+struct Orbit{C<:Union{Nothing,ChebyshevCoefficients}}
     t0::Float64
     spacing::Float64
     position::Vector{SVector{3,Float64}}
     velocity::Vector{SVector{3,Float64}}
     sepsum::NTuple{4,Float64}
+    chebyshev::C
 
-    function Orbit(t0::Float64, spacing::Float64, position::Vector{SVector{3,Float64}},
-                   velocity::Vector{SVector{3,Float64}})
+    function Orbit{C}(t0, spacing, position, velocity, chebyshev) where {C}
         length(position) == length(velocity) || throw(DimensionMismatch(
             "Orbit has $(length(position)) positions and $(length(velocity)) velocities; " *
             "each state vector needs both"))
@@ -86,9 +110,13 @@ struct Orbit
         isfinite(spacing) && !iszero(spacing) || throw(ArgumentError(
             "Orbit state vector spacing must be finite and nonzero, got $spacing s"))
         isfinite(t0) || throw(ArgumentError("Orbit start time must be finite, got $t0 s"))
-        return new(t0, spacing, position, velocity, _sepsum(spacing))
+        return new{C}(t0, spacing, position, velocity, _sepsum(spacing), chebyshev)
     end
 end
+
+Orbit(t0::Float64, spacing::Float64, position::Vector{SVector{3,Float64}},
+      velocity::Vector{SVector{3,Float64}}) =
+    Orbit{Nothing}(t0, spacing, position, velocity, nothing)
 
 # Row sums of the reciprocal node separations, `sum(1/(tn[i] - tn[j]) for j != i)`, which
 # [`interpolate`](@ref) needs for both the position and velocity weights.
@@ -150,6 +178,129 @@ First and last state vector times, in seconds on the caller's scale.
 starttime(o::Orbit) = statetime(o, 1)
 stoptime(o::Orbit) = statetime(o, length(o))
 
+# The Chebyshev form, for an orbit built by `chebyshev_orbit`. A separate method rather than a branch
+# so the default path compiles to exactly what it did before the option existed.
+function interpolate(o::Orbit{<:ChebyshevCoefficients}, t::Real)
+    tt = Float64(t)
+    t_start = starttime(o)
+    t_stop = stoptime(o)
+    (tt >= t_start && tt <= t_stop) || throw(OrbitDomainError(tt, t_start, t_stop))
+
+    c = o.chebyshev
+    idx = _hermite_index(o, tt)
+    # Into `[-1, 1]` across the bracket, which is what the Chebyshev recurrence is defined on.
+    x = (tt - c.tmid[idx]) / c.half
+    return (_clenshaw(c.position[idx], x), _clenshaw(c.velocity[idx], x))
+end
+
+# Clenshaw summation of `sum(a[j] * T[j-1](x))`, evaluated by the Chebyshev three-term recurrence
+# `T[k+1] = 2x*T[k] - T[k-1]` rather than by forming any `T[k]`.
+#
+# Recurses over the tuple rather than over an index, so it terminates on the type and unrolls to
+# straight-line arithmetic — the shape `FastGeoProjections.sin2_series` uses. The base case is the last
+# coefficient rather than a pair of zeros: starting from zeros leaves a multiply by zero and a
+# subtraction of it in the unrolled result, which the fused multiply-adds the rest of the sum relies on
+# do not fold away.
+@inline _clen(ar, c::Tuple{Any}) = (first(c), zero(first(c)))
+@inline function _clen(ar, c::Tuple)
+    y1, y2 = _clen(ar, Base.tail(c))
+    return (first(c) + ar * y1 - y2, y1)
+end
+
+@inline function _clenshaw(a::NTuple{N,SVector{3,Float64}}, x::Float64) where {N}
+    y1, y2 = _clen(2x, Base.tail(a))
+    return first(a) + x * y1 - y2
+end
+
+"""
+    chebyshev_orbit(o::Orbit) -> Orbit
+
+`o` with its interpolant tabulated per bracket as a Chebyshev series, evaluated by Clenshaw summation.
+
+Opt-in, and **not** bitwise: this trades the position agreement [`interpolate`](@ref) documents for
+throughput. The default `Orbit` is unchanged, as [`SceneCenterStart`](@ref) is the default start policy
+for the same reason. Pass the result wherever an `Orbit` is taken — `interpolate` dispatches on it, so
+neither solve changes.
+
+# What it buys
+
+Each bracket's interpolant is a degree-7 polynomial, so a cached series replaces roughly a hundred
+flops of weight construction — the node times, the reciprocal separations, the Lagrange basis and its
+derivative — with eight fused multiply-adds. Measured on the benchmark acquisition:
+
+| | one call | inside `geo2rdr` | a whole radar point |
+|---|---|---|---|
+| Hermite weights (default) | 39.1 ns | 1008 ns | 2708 ns |
+| Chebyshev + Clenshaw | 13.8 ns | 616 ns | 2316 ns |
+| | 2.84× | 1.64× | **1.17×** |
+
+The win shrinks at each level because `geo2rdr` is 37% of a point, which caps any interpolator change
+near 1.6× however fast interpolation becomes.
+
+# What it costs
+
+Over 20001 times spanning the whole orbit domain, against the Hermite form:
+
+| | worst difference | bitwise |
+|---|---|---|
+| position | 1.2e-8 m | 93 / 20001 |
+| velocity | 1.4e-9 m/s | 0 / 20001 |
+
+The error is the coefficient recovery, not the summation — Clenshaw is backward stable, but recovering
+eight coefficients at Earth-radius magnitudes carries ~1e-15 relative, which is ~1e-8 m. A monomial
+basis by Horner recovers position twice as accurately (6.5e-9 m, 1345/20001 bitwise) and is slower
+(1.27× inside `geo2rdr`), so the faster form is also the less accurate one.
+
+Propagated through the zero-Doppler solve this reaches an output as 1.3e-9 azimuth lines and 8.0e-10
+range samples — about 1e-9 of a pixel, far below a rounding boundary — so no integer band moves. The
+float off2vel bands inherit it directly and stay well inside the 2e-4 the radar fixture asserts against
+isce3.
+
+The reason this is opt-in rather than the default is the standard rather than the magnitude: the bitwise
+position agreement is what `REFERENCE.md`'s exactness ladder and `test/blocks.jl`'s blocking assertions
+rest on, so giving it up globally would leave every future radar change to be debugged against a
+tolerance. See `REFERENCE.md`.
+
+```julia
+orbit = chebyshev_orbit(Orbit(; time = t, position = pos, velocity = vel))
+coord = RadarCoordinate(; orbit, starting_range, dr, sensing_start, prf,
+                        nsamples, nlines, look_side, wavelength, incidence_angle)
+```
+"""
+function chebyshev_orbit(o::Orbit)
+    n = length(o)
+    nwin = n - 3
+    # A bracket spans four nodes, so its midpoint sits between the second and third and its half-width
+    # is one and a half spacings. `abs`, since a negative spacing would otherwise reflect the mapping.
+    half = 1.5 * abs(o.spacing)
+    tmid = Vector{Float64}(undef, nwin)
+    pos = Vector{NTuple{8,SVector{3,Float64}}}(undef, nwin)
+    vel = Vector{NTuple{8,SVector{3,Float64}}}(undef, nwin)
+
+    # Chebyshev points of the first kind, and the coefficients by the discrete cosine transform they
+    # diagonalize. Sampled from the Hermite form itself, so the series represents the interpolant this
+    # package evaluates rather than a fresh fit to the state vectors.
+    xs = ntuple(k -> cos(pi * (k - 0.5) / 8), 8)
+    for idx in 1:nwin
+        tm = statetime(o, idx) + half
+        tmid[idx] = tm
+        samples = ntuple(k -> interpolate(o, tm + xs[k] * half), 8)
+        pos[idx] = _cheb_coefficients(ntuple(k -> samples[k][1], 8))
+        vel[idx] = _cheb_coefficients(ntuple(k -> samples[k][2], 8))
+    end
+    return Orbit{ChebyshevCoefficients}(o.t0, o.spacing, o.position, o.velocity,
+                                        ChebyshevCoefficients(pos, vel, tmid, half))
+end
+
+# Chebyshev coefficients of a function sampled at the eight points of the first kind.
+@inline _cheb_coefficients(f::NTuple{8,SVector{3,Float64}}) = ntuple(8) do j
+    s = SVector{3,Float64}(0.0, 0.0, 0.0)
+    for k in 1:8
+        s += f[k] * cos(pi * (j - 1) * (k - 0.5) / 8)
+    end
+    return (j == 1 ? 1.0 : 2.0) * s / 8
+end
+
 """
     interpolate(o::Orbit, t) -> NTuple{2,SVector{3,Float64}}
 
@@ -173,8 +324,11 @@ a difference of two products each larger than their difference, so a contracted 
 strictly-rounded one diverge there. isce3 is compiled with contraction enabled and Julia rounds each
 operation. Confirmed to be that and not a transcription error by an independent implementation of the
 same formula, which reproduces this result rather than isce3's. See `REFERENCE.md`.
+
+An orbit carrying a Chebyshev table — [`chebyshev_orbit`](@ref) — is evaluated by that table instead,
+which is faster and gives up the bitwise position agreement above.
 """
-function interpolate(o::Orbit, t::Real)
+function interpolate(o::Orbit{Nothing}, t::Real)
     tt = Float64(t)
     t_start = starttime(o)
     t_stop = stoptime(o)

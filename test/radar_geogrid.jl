@@ -383,6 +383,66 @@ end
     @info "WarmStart blocked-vs-whole float divergence" worst_relative = worst bound = 2e-4
 end
 
+@testset "chebyshev_orbit moves no index, and the float bands stay far inside the bound" begin
+    # The other opt-in on this path, and the same shape of trade as `WarmStart` above: faster, not
+    # bitwise. What makes it usable is that the loss lands entirely in the float bands -- the rounded
+    # indices are what a correlator searches around, so one moved index would be a changed product
+    # rather than a changed last bit.
+    #
+    # Unlike `WarmStart`, this keeps blocking invariance: the interpolant is still a pure function of
+    # time, so points remain independent.
+    c = only(filter(x -> x.name == "utm32n", collect(GFIX.cases)))
+    exact, win, coord, grid, tf = RESULTS["utm32n"]
+    pair = CoregisteredPair(coord; dt = Float64(c.dt))
+    inputs = fixture_inputs(GARR, c, win)
+
+    # The same acquisition with the interpolant tabulated. Rebuilt rather than mutated, since the
+    # option is carried by the orbit's type.
+    cheb_coord = RadarCoordinate(; orbit = chebyshev_orbit(coord.orbit),
+                                 starting_range = coord.starting_range, dr = coord.dr,
+                                 sensing_start = coord.sensing_start, prf = coord.prf,
+                                 nsamples = coord.nsamples, nlines = coord.nlines,
+                                 look_side = coord.look_side, wavelength = coord.wavelength,
+                                 incidence_angle = coord.incidence_angle)
+    cheb_pair = CoregisteredPair(cheb_coord; dt = Float64(c.dt))
+    approx = pairgeometry(grid, cheb_pair, inputs; transform = tf, window = win,
+                          nodata = nodata_from(0.0))
+
+    # Every integer band, bitwise. This is the claim the option rests on.
+    for f in INT_BANDS
+        @test getfield(exact, f) == getfield(approx, f)
+    end
+
+    # The float bands differ -- otherwise the table is not being consulted -- but by far less than the
+    # bound those bands are held to against isce3.
+    anydiff = any(reinterpret(UInt64, getfield(exact, f)) !=
+                  reinterpret(UInt64, getfield(approx, f)) for f in FLOAT_BANDS)
+    @test anydiff
+
+    worst = 0.0
+    for f in FLOAT_BANDS
+        a = getfield(exact, f); b = getfield(approx, f)
+        for i in eachindex(a, b)
+            (a[i] == -32767.0 || b[i] == -32767.0) && continue
+            worst = max(worst, abs(a[i] - b[i]) / max(abs(b[i]), 1.0))
+        end
+    end
+    @test worst < 2e-4
+    @info "chebyshev_orbit float divergence from the exact path" worst_relative = worst bound = 2e-4
+
+    # Blocking invariance survives, which is what separates this option from `WarmStart`.
+    blocked = pairgeometry_blocked(grid, cheb_pair, InMemoryInputs(inputs, win); transform = tf,
+                                   window = win, blocksize = (16, 16), ntasks = 1,
+                                   nodata = nodata_from(0.0))
+    for f in INT_BANDS
+        @test getfield(approx, f) == getfield(blocked, f)
+    end
+    # Bitwise on the floats, not `==`: `-0.0 == 0.0` holds while the bits differ.
+    for f in FLOAT_BANDS
+        @test reinterpret(UInt64, getfield(approx, f)) == reinterpret(UInt64, getfield(blocked, f))
+    end
+end
+
 @testset "the band layout comes from the coordinate, not the bands" begin
     # `dem_only` is a radar case with no slope raster, so the branch that fills `off2vx_dr` never
     # runs and every value in it is sentinel. Inferring the layout from that band would call this a
