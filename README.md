@@ -55,7 +55,7 @@ evaluates the transform on a coarse lattice and interpolates between the nodes, 
 kernel (`Bilinear`, `Bicubic`, `NearestNode`) and two modes:
 
 ```julia
-tf = InterpolatedTransform(ProjTransformFactory(3413, 32624), grid, pair;
+tf = InterpolatedTransform(fast_transform(3413, 32624), grid, pair;
                            lattice = 4, mode = :hybrid, window = win)
 r = pairgeometry_blocked(grid, pair, source; transform = tf, window = win, ntasks = 8)
 ```

@@ -12,7 +12,12 @@ acquisition on a grid of a chosen size, and the `run_*.jl` scripts measure again
 cost and its breakdown, the statistical profile, storage scaling, and the accuracy-versus-iterations
 sweeps behind `GEO2RDR_ITERATIONS`, `RANGE_DOPPLER_ITERATIONS` and `WarmStart`.
 
-`run_items23.jl`, `run_bitwise.jl` and `run_ceiling.jl` record measurements a source comment cites:
-which orbit-interpolation variants preserve the tested 1-ULP position agreement with isce3, and which
-loop-invariant hoists are worth taking once inlined. A change that revisits either should re-run them
-rather than trust the numbers in the comment.
+`run_items23.jl`, `run_bitwise.jl`, `run_ceiling.jl` and `run_sepsum.jl` record measurements a source
+comment or commit message cites: which orbit-interpolation variants preserve the tested 1-ULP position
+agreement with isce3, which loop-invariant hoists are worth taking once inlined, and the bitwise gate
+behind storing the Hermite separation sums on the `Orbit`. A change that revisits any of them should
+re-run it rather than trust the number in prose.
+
+None of these depend on a projection library. `fast_transform` is the only transform the package
+ships, so it is what they measure; the reference fixtures were generated through PROJ and `test/`
+asserts against it, but nothing here does.

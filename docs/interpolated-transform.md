@@ -14,14 +14,16 @@ whose directions are `CoordLattice`s. A lattice is callable as `(x, y, z) -> (x�
 substitutes for a transform and the kernel is unchanged.
 
 ```julia
-tf = InterpolatedTransform(ProjTransformFactory(3413, 32624), grid, pair;
+tf = InterpolatedTransform(fast_transform(3413, 32624), grid, pair;
                            lattice = 4, mode = :hybrid, interpolation = Bilinear(), window = win)
 r = pairgeometry_blocked(grid, pair, source; transform = tf, window = win, ntasks = 8)
 ```
 
 `lattice` is the node spacing as a multiple of the grid spacing. `interpolation` is `Bilinear()`,
 `Bicubic()` or `NearestNode()`. It is an `AbstractTransformFactory`, so a blocked run calls it once
-per task and each task owns its lattice and its PROJ context for that task's lifetime.
+per task and each task owns its lattice — and whatever state the wrapped transform holds — for that
+task's lifetime. `fast_transform` holds none and is safe to share; a PROJ pipeline wraps a context
+that is not, which is what the per-task ownership is for.
 
 The lattice is built from the whole window's bounds, not per block, so a blocked result does not
 depend on the block size — the invariant `pairgeometry_blocked` documents. Node coverage is derived
