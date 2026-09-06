@@ -27,7 +27,7 @@ import os
 import time
 
 import numpy as np
-from osgeo import gdal, osr
+from osgeo import gdal
 
 import isce3
 from isce3.core import DateTime, Orbit, StateVector, TimeDelta
