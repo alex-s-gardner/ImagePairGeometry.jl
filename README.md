@@ -44,6 +44,23 @@ of minutes, and threading rather than transform caching is the lever that matter
 `REFERENCE.md` records the exactness standard held against the reference on each path, and every
 deliberate divergence.
 
+## Bounding memory
+
+`pairgeometry_blocked` reads its inputs a block at a time, so the eleven input rasters are never
+materialized whole. The 19 output bands are 108 bytes per grid point of the window whatever the block
+size, though — a 40000×40000 polar grid is around 170 GB — so a run that large also needs its output
+streamed. A `sink` does that: each block is consumed as it completes and its buffer reused, leaving
+peak output memory at one block per task.
+
+```julia
+paths = pairgeometry_blocked(grid, pair, source; transform = tf, ntasks = 8,
+                             sink = ImagePairGeometry.GeoTIFFOutputs(outdir))
+```
+
+`GeoTIFFOutputs` writes the same files `write_geotiffs` does, incrementally, and returns their paths;
+`BlockCallback(f)` hands each block to `f` instead. The default sink collects the whole window into
+one `PairGeometry` and is what the examples above return.
+
 ## Approximating the projection
 
 This applies to the projected path. On the radar path PROJ is 6% of a point rather than 95%, so there

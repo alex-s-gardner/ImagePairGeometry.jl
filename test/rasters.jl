@@ -17,7 +17,7 @@ using Test
 # An extension's exports are not brought in by `using ImagePairGeometry`, so its names are reached
 # through the module itself — the same way a caller would.
 const RA_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)
-using .RA_EXT: RasterInputs
+using .RA_EXT: RasterInputs, GeoTIFFOutputs
 
 """A raster on the grid `gt` describes, written to `path` so it is disk-backed when read back.
 
@@ -254,6 +254,168 @@ end
         @test basename.(written) == ["window_location.tif"]
         @test !isfile(joinpath(out, "window_offset.tif"))
         @test !isfile(joinpath(out, "window_scale_factor.tif"))
+    end
+end
+
+"""The pieces every streaming test needs: the grid, a pair over it, its window, and a full source."""
+function stream_case(dir)
+    _, paths = raster_case(dir)
+    grid = mapgrid(load(paths["dem"]))
+    img = ImageFootprint(origin = (300000.0, 7800000.0), spacing = (30.0, -30.0), size = (400, 400))
+    pair = coregister(img, img; dt = 91 * 86400.0)
+    win = grid_window(grid, footprint_bounds(IdentityTransform(), pair.coordinate))
+    src = RasterInputs(dem = load(paths["dem"]), dhdx = load(paths["dhdx"]),
+                       dhdy = load(paths["dhdy"]), vx = load(paths["vx"]), vy = load(paths["vy"]),
+                       srx = load(paths["srx"]), sry = load(paths["sry"]),
+                       csminx = load(paths["csminx"]), csminy = load(paths["csminy"]),
+                       csmaxx = load(paths["csmaxx"]), csmaxy = load(paths["csmaxy"]),
+                       ssm = load(paths["ssm"]))
+    return (; grid, pair, win, src, paths)
+end
+
+"""Assert two GeoTIFFs agree band for band, and on their georeferencing.
+
+Bitwise on the float bands: `Float64` on disk is exact, so anything short of that is a real
+difference — and `-0.0 == 0.0` while `NaN != NaN` would hide one in both directions.
+"""
+function assert_same_geotiff(a::AbstractString, b::AbstractString)
+    ArchGDAL.read(a) do dsa
+        ArchGDAL.read(b) do dsb
+            @test ArchGDAL.nraster(dsa) == ArchGDAL.nraster(dsb)
+            @test ArchGDAL.width(dsa) == ArchGDAL.width(dsb)
+            @test ArchGDAL.height(dsa) == ArchGDAL.height(dsb)
+            @test collect(ArchGDAL.getgeotransform(dsa)) ≈ collect(ArchGDAL.getgeotransform(dsb))
+            @test ArchGDAL.getproj(dsa) == ArchGDAL.getproj(dsb)
+            for i in 1:ArchGDAL.nraster(dsb)
+                banda, bandb = ArchGDAL.getband(dsa, i), ArchGDAL.getband(dsb, i)
+                @test ArchGDAL.getnodatavalue(banda) == ArchGDAL.getnodatavalue(bandb)
+                got, want = ArchGDAL.read(banda), ArchGDAL.read(bandb)
+                @test eltype(got) === eltype(want)
+                if eltype(want) === Int32
+                    @test got == want
+                else
+                    @test reinterpret(UInt64, got) == reinterpret(UInt64, want)
+                end
+            end
+        end
+    end
+end
+
+@testset "GeoTIFFOutputs streams what write_geotiffs writes" begin
+    # The whole point of the sink: the same files, byte for byte, without the full-grid result ever
+    # existing. Compared against `write_geotiffs` of a collected run rather than against fixtures, so
+    # the two paths cannot drift.
+    mktempdir() do dir
+        c = stream_case(dir)
+        collected = pairgeometry_blocked(c.grid, c.pair, c.src; transform = IdentityTransform(),
+                                         window = c.win, blocksize = (32, 32),
+                                         nodata = nodata_from(-32767.0))
+        reference = mktempdir()
+        write_geotiffs(reference, collected)
+
+        # Block sizes that divide the window and ones that do not, and both task counts: a short edge
+        # block is written from a differently-shaped buffer, and GDAL takes a write buffer's row stride
+        # from its own width.
+        for bs in ((32, 32), (37, 11)), nt in (1, 4)
+            out = mktempdir()
+            paths = pairgeometry_blocked(c.grid, c.pair, c.src; transform = IdentityTransform(),
+                                         window = c.win, blocksize = bs, ntasks = nt,
+                                         nodata = nodata_from(-32767.0),
+                                         sink = GeoTIFFOutputs(out; chunks = (16, 16)))
+            @testset "blocksize $bs ntasks $nt" begin
+                @test Set(basename.(paths)) == Set(first.(REFERENCE_FILES))
+                for p in paths
+                    assert_same_geotiff(p, joinpath(reference, basename(p)))
+                end
+            end
+        end
+    end
+end
+
+@testset "a streamed unsupported band creates no file" begin
+    # `write_geotiffs` skips a file whose bands turn out to be all sentinel; a streaming sink cannot
+    # know that until the last block, so it predicts from which input rasters were given. On these
+    # inputs the two criteria agree, which is the case that matters.
+    mktempdir() do dir
+        c = stream_case(dir)
+        bare = RasterInputs(dem = load(c.paths["dem"]))
+        @test supported_bands(bare, c.pair.coordinate) == [:location_x, :location_y]
+
+        out = mktempdir()
+        paths = pairgeometry_blocked(c.grid, c.pair, bare; transform = IdentityTransform(),
+                                     window = c.win, blocksize = (32, 32),
+                                     nodata = nodata_from(-32767.0), sink = GeoTIFFOutputs(out))
+        @test basename.(paths) == ["window_location.tif"]
+        @test readdir(out) == ["window_location.tif"]
+
+        collected = pairgeometry_blocked(c.grid, c.pair, bare; transform = IdentityTransform(),
+                                         window = c.win, blocksize = (32, 32),
+                                         nodata = nodata_from(-32767.0))
+        reference = mktempdir()
+        @test basename.(write_geotiffs(reference, collected)) == ["window_location.tif"]
+        assert_same_geotiff(only(paths), joinpath(reference, "window_location.tif"))
+    end
+end
+
+@testset "a streamed radar result gets the three-band layout" begin
+    # The band count comes from the coordinate, so a radar run streams three-band off2vel files. Band 3
+    # is `off2vx_dr`/`off2vy_dr`, which the projected path has no equivalent of — a consumer indexes
+    # bands positionally, so writing two where the reference writes three shifts everything after them.
+    #
+    # The sink is driven directly rather than through a radar `pairgeometry_blocked` run: the geometry
+    # of this orbit against this grid is `radar_geogrid.jl`'s subject, and what is at stake here is only
+    # which files the sink creates and how many bands each gets.
+    mktempdir() do dir
+        c = stream_case(dir)
+        bands = supported_bands(c.src, RADAR_COORD)
+        @test :off2vx_dr in bands
+        @test :off2vy_dr in bands
+
+        out = mktempdir()
+        ctx = ImagePairGeometry.SinkContext(c.grid, RADAR_COORD, c.win, (32, 32),
+                                           nodata_from(-32767.0), bands)
+        paths = ImagePairGeometry.finish_sink(
+            ImagePairGeometry.prepare_sink(GeoTIFFOutputs(out), ctx))
+        @test Set(basename.(paths)) == Set(first.(ImagePairGeometry.RADAR_REFERENCE_FILES))
+        for f in ("window_rdr_off2vel_x_vec.tif", "window_rdr_off2vel_y_vec.tif")
+            @test joinpath(out, f) in paths
+            ArchGDAL.read(joinpath(out, f)) do ds
+                @test ArchGDAL.nraster(ds) == 3
+            end
+        end
+
+        # And the projected path's two-band layout comes out of the same call, from the coordinate alone.
+        pout = mktempdir()
+        pctx = ImagePairGeometry.SinkContext(c.grid, c.pair.coordinate, c.win, (32, 32),
+                                            nodata_from(-32767.0),
+                                            supported_bands(c.src, c.pair.coordinate))
+        ImagePairGeometry.finish_sink(ImagePairGeometry.prepare_sink(GeoTIFFOutputs(pout), pctx))
+        for f in ("window_rdr_off2vel_x_vec.tif", "window_rdr_off2vel_y_vec.tif")
+            ArchGDAL.read(joinpath(pout, f)) do ds
+                @test ArchGDAL.nraster(ds) == 2
+            end
+        end
+    end
+end
+
+@testset "a streamed output is georeferenced" begin
+    # `Rasters.create` from a `dims` tuple does not carry a `crs` through to the file, so the sink sets
+    # the projection itself. Without that step the output looks complete and is unreferenced — and a
+    # geotransform silently landing on GDAL's default `(0, 1, 0, 0, 0, 1)` is the failure this
+    # extension already guards against on the write path.
+    mktempdir() do dir
+        c = stream_case(dir)
+        out = mktempdir()
+        paths = pairgeometry_blocked(c.grid, c.pair, c.src; transform = IdentityTransform(),
+                                     window = c.win, blocksize = (32, 32),
+                                     nodata = nodata_from(-32767.0), sink = GeoTIFFOutputs(out))
+        want = ImagePairGeometry.window_geotransform(c.grid, c.win)
+        for p in paths
+            @test collect(ArchGDAL.read(ArchGDAL.getgeotransform, p)) ≈ collect(want)
+            @test Rasters.crs(Raster(p)) !== nothing
+            @test !isempty(convert(String, convert(Rasters.GeoFormatTypes.WellKnownText,
+                                                   Rasters.crs(Raster(p)))))
+        end
     end
 end
 

@@ -139,6 +139,11 @@ result = pairgeometry_blocked(grid, pair, source;
 One transform object serves every task: a [`fast_transform`](@ref) pair is immutable and holds no
 library state, so nothing has to be built per task.
 
+This returns the whole window as one [`PairGeometry`](@ref), which is 108 bytes per grid point
+whatever the block size. Where that does not fit — a continental grid is hundreds of gigabytes of
+output — pass a `sink` and the result is written or consumed block by block instead, at one block per
+task. See [Streaming the output](streaming.md).
+
 Where the grid and the imagery share a CRS, pass [`IdentityTransform`](@ref) instead — it is exact by
 construction and skips the projection entirely.
 
@@ -249,7 +254,8 @@ each is defined in, which follows the layering: vector and rounding primitives, 
 transforms, then the grid, then the kernel, then the driver.
 
 The radar path's own numerics — the ellipsoid, orbit interpolation, and the two geometry solves —
-are on the [Radar geometry](radar.md) page.
+are on the [Radar geometry](radar.md) page; the output sink protocol is on
+[Streaming the output](streaming.md).
 
 ```@autodocs
 Modules = [ImagePairGeometry]

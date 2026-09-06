@@ -104,6 +104,187 @@ end
     end
 end
 
+"""A `BlockCallback` sink assembling every block into one full-window result.
+
+The properties a streaming sink has to hold are asserted as each block arrives: it is sized to the
+block, it carries the block's own georeferencing rather than the window's, and it views a buffer the
+task reuses rather than a fresh allocation. `buffers` collects the identity of each block's backing
+array, so a task drawing many blocks must contribute exactly one entry.
+"""
+function assembling_sink(grid, coord, win, nodata)
+    whole = ImagePairGeometry.allocate_geometry(
+        win, ImagePairGeometry.window_geotransform(grid, win), grid.crs, nodata, coord)
+    lk = ReentrantLock()
+    buffers = Set{UInt}()
+    sizes_ok = Ref(true)
+    geotransforms_ok = Ref(true)
+    f = function (block, g)
+        size(g) == size(block) || (sizes_ok[] = false)
+        g.window == block || (sizes_ok[] = false)
+        g.geotransform == ImagePairGeometry.window_geotransform(grid, block) ||
+            (geotransforms_ok[] = false)
+        off = first(win).I .- 1
+        local_block = CartesianIndices((block.indices[1] .- off[1], block.indices[2] .- off[2]))
+        lock(lk) do
+            push!(buffers, objectid(parent(g.location_x)))
+            for name in (INT_BANDS..., FLOAT_BANDS...)
+                view(getfield(whole, name), local_block) .= getfield(g, name)
+            end
+        end
+    end
+    return (; sink = BlockCallback(f), whole, buffers, sizes_ok, geotransforms_ok)
+end
+
+@testset "streamed equals collected: $name" for name in
+        ("same_crs", "cross_crs", "with_nodata", "dem_only")
+    s = setup_case(name)
+    nd = nodata_from(-32767.0)
+    whole = pairgeometry(s.grid, s.pair, s.inputs; transform = s.makepair(), window = s.win,
+                         params = s.params, nodata = nd)
+    src = InMemoryInputs(s.inputs, s.win)
+
+    for bs in ((7, 13), (16, 16), (1000, 1000))
+        a = assembling_sink(s.grid, s.pair.coordinate, s.win, nd)
+        pairgeometry_blocked(s.grid, s.pair, src; transform = s.makepair(), window = s.win,
+                             blocksize = bs, ntasks = 1, params = s.params, nodata = nd,
+                             sink = a.sink)
+        @testset "blocksize $bs" begin
+            assert_identical(whole, a.whole)
+            @test a.sizes_ok[]
+            @test a.geotransforms_ok[]
+            # The bound this sink exists for: one task holds one buffer however many blocks it draws.
+            @test length(a.buffers) == 1
+        end
+    end
+end
+
+@testset "streamed equals collected across threads" begin
+    s = setup_case("cross_crs")
+    nd = nodata_from(-32767.0)
+    whole = pairgeometry(s.grid, s.pair, s.inputs; transform = s.makepair(), window = s.win,
+                         params = s.params, nodata = nd)
+    src = InMemoryInputs(s.inputs, s.win)
+
+    for nt in (2, 4)
+        a = assembling_sink(s.grid, s.pair.coordinate, s.win, nd)
+        pairgeometry_blocked(s.grid, s.pair, src; transform = s.makepair, window = s.win,
+                             blocksize = (8, 8), ntasks = nt, params = s.params, nodata = nd,
+                             sink = a.sink)
+        @testset "ntasks $nt" begin
+            assert_identical(whole, a.whole)
+            @test a.sizes_ok[]
+            @test a.geotransforms_ok[]
+            # One buffer per task that actually ran, never one per block. A run with more tasks than
+            # the window has blocks starts fewer.
+            nblocks = length(block_ranges(s.win, (8, 8)))
+            @test length(a.buffers) <= min(nt, nblocks)
+        end
+    end
+end
+
+"""A sink asserting that each task owns its own state and its own block buffer.
+
+Each state is stamped with an id at creation, and every block records which state produced it against
+the address of the buffer it came from. A buffer reached from two different states is one buffer shared
+between two tasks.
+
+Ownership per task is what the protocol promises and what the callers of `sink_taskstate` rely on: a
+`Proj.Transformation` wraps a context PROJ documents as usable from one thread at a time, and a shared
+block buffer means two tasks writing one array. Both are silent — the transform pairs of a run compute
+the same values, and a shared buffer shows up only as blocks carrying each other's points.
+"""
+struct OwnershipProbe <: ImagePairGeometry.AbstractOutputSink
+    built::Threads.Atomic{Int}
+    commits::Threads.Atomic{Int}
+    # Buffer address to the ids of every state that handed out a block from it.
+    owners::Dict{UInt,Set{Int}}
+    lk::ReentrantLock
+end
+
+OwnershipProbe() = OwnershipProbe(Threads.Atomic{Int}(0), Threads.Atomic{Int}(0),
+                                  Dict{UInt,Set{Int}}(), ReentrantLock())
+
+struct ProbeState{G}
+    id::Int
+    buffer::G
+end
+
+ImagePairGeometry.prepare_sink(p::OwnershipProbe, ::ImagePairGeometry.SinkContext) = p
+
+function ImagePairGeometry.sink_taskstate(p::OwnershipProbe, ctx::ImagePairGeometry.SinkContext)
+    buffer = ImagePairGeometry.allocate_geometry(
+        CartesianIndices(min.(ctx.blocksize, size(ctx.window))),
+        ImagePairGeometry.window_geotransform(ctx.grid, ctx.window), ctx.grid.crs, ctx.nodata,
+        ctx.coordinate)
+    return ProbeState(Threads.atomic_add!(p.built, 1) + 1, buffer)
+end
+
+ImagePairGeometry.blockdest(::OwnershipProbe, state::ProbeState,
+                            ctx::ImagePairGeometry.SinkContext, block) =
+    ImagePairGeometry._refilled_buffer(state.buffer, ctx, block)
+
+function ImagePairGeometry.commitblock!(p::OwnershipProbe, state::ProbeState,
+                                        ::ImagePairGeometry.SinkContext, block, dest)
+    Threads.atomic_add!(p.commits, 1)
+    # The address rather than `objectid`: a buffer is alive for its task's whole lifetime, so an address
+    # identifies it, while `objectid` on a mutable object is not stable across a `Dict` rehash.
+    address = UInt(pointer(parent(dest.location_x)))
+    lock(p.lk) do
+        push!(get!(p.owners, address, Set{Int}()), state.id)
+    end
+    return nothing
+end
+
+ImagePairGeometry.finish_sink(p::OwnershipProbe) = p
+
+@testset "each task owns its own sink state" begin
+    s = setup_case("same_crs")
+    src = InMemoryInputs(s.inputs, s.win)
+    nblocks = length(block_ranges(s.win, (8, 8)))
+
+    for nt in (1, 2, 4)
+        p = pairgeometry_blocked(s.grid, s.pair, src; transform = s.makepair, window = s.win,
+                                 blocksize = (8, 8), ntasks = nt, params = s.params,
+                                 nodata = nodata_from(-32767.0), sink = OwnershipProbe())
+        @testset "ntasks $nt" begin
+            ntasks_run = min(nt, nblocks)
+            @test p.commits[] == nblocks
+            # One state per task, one buffer per state, and no buffer reached from two states. A single
+            # boxed local in the spawn loop gives several tasks the same state, and the only symptom is
+            # blocks holding each other's points.
+            @test p.built[] == ntasks_run
+            @test length(p.owners) == ntasks_run
+            @test all(==(1), length.(values(p.owners)))
+        end
+    end
+end
+
+@testset "supported_bands reads which inputs were given" begin
+    s = setup_case("same_crs")
+    coord = s.pair.coordinate
+    all_bands = supported_bands(s.inputs, coord)
+    # The projected path never writes the third off2vel band, whatever its inputs.
+    @test :off2vx_dr ∉ all_bands
+    @test :off2vy_dr ∉ all_bands
+    @test issubset([:location_x, :offset_x, :search_x, :scale_x, :stable_surface], all_bands)
+
+    # A DEM alone supports the two location bands and nothing else: every other output needs a raster
+    # that was not given.
+    bare = supported_bands(GeometryInputs(dem = s.inputs.dem), coord)
+    @test bare == [:location_x, :location_y]
+
+    # Slope gates the operator, the scale factors, the offset and the search extent, so dropping it
+    # drops all four even where velocity and search range are present -- which `GeometryInputs` will
+    # not let happen, so this asserts the predicate rather than a constructible case.
+    noslope = ImagePairGeometry._supported_bands(coord; slope = false, vel = true, sr = true,
+                                                csmin = true, csmax = true, ssm = true)
+    @test noslope == [:location_x, :location_y, :chip_min_x, :chip_min_y, :chip_max_x, :chip_max_y,
+                      :stable_surface]
+
+    # A source reports the bands of the inputs it holds.
+    @test supported_bands(InMemoryInputs(s.inputs, s.win), coord) == all_bands
+end
+
 @testset "readblock views rather than copies" begin
     s = setup_case("same_crs")
     src = InMemoryInputs(s.inputs, s.win)

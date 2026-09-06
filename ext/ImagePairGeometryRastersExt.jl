@@ -21,7 +21,12 @@ module ImagePairGeometryRastersExt
 using ImagePairGeometry
 using ImagePairGeometry: PairGeometry, AbstractInputSource, GeometryInputs, REFERENCE_FILES,
                          RADAR_REFERENCE_FILES, reference_files, INT_BANDS, FLOAT_BANDS,
-                         nodata_from, NoDataPolicy
+                         nodata_from, NoDataPolicy, AbstractOutputSink, SinkContext,
+                         AbstractImageCoordinate, allocate_geometry, window_geotransform,
+                         _refilled_buffer
+# Extended below, so imported rather than reached through the module: the sink protocol's five
+# functions are what a new sink implements.
+import ImagePairGeometry: prepare_sink, sink_taskstate, blockdest, commitblock!, finish_sink
 using Rasters
 using Rasters: AbstractRaster
 import GeoInterface
@@ -315,14 +320,7 @@ function ImagePairGeometry.write_geotiffs(dir::AbstractString, g::PairGeometry)
         # are hard to pin down — the file ends up with GDAL's default while its projection, band data
         # and nodata all persist, so it looks georeferenced and is not. Handing Rasters a
         # georeferenced `Raster` puts that step where Rasters tests it.
-        #
-        # Lookups are `Intervals(Start())` to match what GDAL writes, and are built from the
-        # geotransform's own low edge per axis — `Start` is the low edge in *coordinate* order, so a
-        # negative step counts from the far end. This is `_edge_offset` in reverse.
-        x0 = gt[1] + (gt[2] < 0 ? gt[2] : 0.0)
-        y0 = gt[4] + (gt[6] < 0 ? gt[6] : 0.0)
-        xdim = X(range(x0; step = gt[2], length = nx); sampling = Lk.Intervals(Lk.Start()))
-        ydim = Y(range(y0; step = gt[6], length = ny); sampling = Lk.Intervals(Lk.Start()))
+        dims3 = _output_dims(gt, nx, ny, length(bands))
 
         # A multi-band file is one 3-D raster with a `Band` dimension, not a stack: `Rasters.write`
         # splits a stack into one file per layer, and the reference's consumers expect a single file
@@ -331,8 +329,7 @@ function ImagePairGeometry.write_geotiffs(dir::AbstractString, g::PairGeometry)
         for (i, band) in enumerate(bands)
             cube[:, :, i] .= band
         end
-        Rasters.write(path, Rasters.Raster(cube, (xdim, ydim, Rasters.Band(1:length(bands)));
-                                           missingval = T(g.nodata.output),
+        Rasters.write(path, Rasters.Raster(cube, dims3; missingval = T(g.nodata.output),
                                            crs = GeoInterface.crs(g)); force = true)
         isfile(path) || error("write_geotiffs did not produce $path")
         push!(written, path)
@@ -340,7 +337,208 @@ function ImagePairGeometry.write_geotiffs(dir::AbstractString, g::PairGeometry)
     return written
 end
 
+# The dimensions of an output file with `nb` bands over the region `gt` georeferences.
+#
+# Lookups are `Intervals(Start())` to match what GDAL writes, and are built from the geotransform's
+# own low edge per axis — `Start` is the low edge in *coordinate* order, so a negative step counts
+# from the far end. This is `_edge_offset` in reverse.
+function _output_dims(gt::NTuple{6,Float64}, nx::Int, ny::Int, nb::Int)
+    x0 = gt[1] + (gt[2] < 0 ? gt[2] : 0.0)
+    y0 = gt[4] + (gt[6] < 0 ? gt[6] : 0.0)
+    return (X(range(x0; step = gt[2], length = nx); sampling = Lk.Intervals(Lk.Start())),
+            Y(range(y0; step = gt[6], length = ny); sampling = Lk.Intervals(Lk.Start())),
+            Rasters.Band(1:nb))
+end
 
-export RasterInputs
+"""
+    ImagePairGeometry.supported_bands(src::RasterInputs, coordinate) -> Vector{Symbol}
+
+The bands `src`'s rasters can produce, from which of them were given.
+"""
+ImagePairGeometry.supported_bands(src::RasterInputs, coordinate::AbstractImageCoordinate) =
+    ImagePairGeometry._supported_bands(coordinate; slope = src.dhdx !== nothing,
+                                       vel = src.vx !== nothing, sr = src.srx !== nothing,
+                                       csmin = src.csminx !== nothing,
+                                       csmax = src.csmaxx !== nothing, ssm = src.ssm !== nothing)
+
+"""
+    GeoTIFFOutputs(dir; chunks = (256, 256))
+
+An output sink writing `ImagePairGeometry.write_geotiffs`' files as the blocks complete.
+
+Nothing full-grid is allocated and no second pass is made: each block is written to disk and its
+buffer reused, so peak output memory is one block per task rather than 108 bytes per grid point of the
+window. This is what makes a grid whose result does not fit in memory computable — see
+[`ImagePairGeometry.pairgeometry_blocked`](@ref), which returns the paths written.
+
+`chunks` is the GeoTIFF's internal tiling. A block write that straddles tile boundaries reads and
+rewrites the surrounding tiles, so this wants to divide the run's `blocksize`.
+
+The files, their names, band order, data types and nodata match `write_geotiffs`, which is the
+comparison the test suite makes. One case differs: `write_geotiffs` skips a file whose bands turn out
+to be entirely nodata, while this decides which files to create up front from which input rasters were
+given, via `supported_bands`. Where a slope raster is given but the surface is perpendicular to the
+image plane at every point of the window, the two off2vel files are created here and skipped there.
+
+```julia
+paths = pairgeometry_blocked(grid, pair, source; transform = tf, ntasks = 8,
+                             sink = ImagePairGeometry.GeoTIFFOutputs(outdir))
+```
+"""
+struct GeoTIFFOutputs <: AbstractOutputSink
+    dir::String
+    chunks::NTuple{2,Int}
+end
+
+GeoTIFFOutputs(dir::AbstractString; chunks::NTuple{2,Int} = (256, 256)) =
+    GeoTIFFOutputs(String(dir), chunks)
+
+# The open files, and the lock serializing writes to them.
+#
+# One lock for all of them rather than one each: a block's bands are written together, so per-file
+# locks would be taken in a group anyway, and GDAL's own thread safety across datasets sharing a
+# driver is not something to rely on. The cost is that a block's writes serialize against another
+# block's, which is measured in `benchmark/run_memory.jl`.
+struct PreparedGeoTIFF
+    datasets::Vector{ArchGDAL.IDataset}
+    paths::Vector{String}
+    # The `PairGeometry` fields holding each file's bands, in band order — every band the file has,
+    # supported or not, since a band number is positional. An unsupported one is skipped at write time
+    # and keeps the sentinel `create` filled it with.
+    fields::Vector{Tuple{Vararg{Symbol}}}
+    # The supported bands, as a set: `commitblock!` tests every band of every file per block.
+    bands::Set{Symbol}
+    # The window's geotransform, verified against the files at `finish_sink`.
+    geotransform::NTuple{6,Float64}
+    # The grid index the files' `(1, 1)` is, so a block's grid indices become file indices.
+    origin::NTuple{2,Int}
+    lock::ReentrantLock
+end
+
+function prepare_sink(sink::GeoTIFFOutputs, ctx::SinkContext)
+    isdir(sink.dir) || mkpath(sink.dir)
+    gt = window_geotransform(ctx.grid, ctx.window)
+    nx, ny = size(ctx.window)
+    crs = ctx.grid.crs
+
+    datasets = ArchGDAL.IDataset[]
+    paths = String[]
+    fields = Tuple{Vararg{Symbol}}[]
+
+    for (filename, bandfields) in reference_files(ctx.coordinate)
+        # A file none of whose bands the inputs support is not created at all, matching
+        # `write_geotiffs` and the reference: a consumer reads a file's absence as "this output was
+        # not computed".
+        any(f -> f in ctx.bands, bandfields) || continue
+        # `Int32` where the reference writes `GDT_Int32`, as `write_geotiffs` does — the band's type
+        # follows from which group of `PairGeometry` fields holds it.
+        T = first(bandfields) in INT_BANDS ? Int32 : Float64
+        path = joinpath(sink.dir, filename)
+        sentinel = T(ctx.nodata.output)
+
+        # `fill` rather than leaving the values undefined: a point the per-point loop skips is never
+        # written, and a band the inputs do not support is never written at all, so every byte of the
+        # file must already read as nodata.
+        Rasters.create(path, T, _output_dims(gt, nx, ny, length(bandfields));
+                       missingval = sentinel, fill = sentinel, force = true, lazy = true,
+                       verbose = false,
+                       chunks = (X = sink.chunks[1], Y = sink.chunks[2], Band = 1))
+
+        ds = ArchGDAL.read(path; flags = ArchGDAL.OF_UPDATE)
+        # `Rasters.create` does not carry a `crs` through to a file built from a `dims` tuple — the
+        # created file has no projection at all — so it is set here. Without this a streamed output is
+        # unreferenced while looking otherwise complete.
+        crs === nothing || ArchGDAL.setproj!(ds, convert(GFT.WellKnownText, crs).val)
+
+        push!(datasets, ds)
+        push!(paths, path)
+        push!(fields, bandfields)
+    end
+
+    return PreparedGeoTIFF(datasets, paths, fields, Set(ctx.bands), gt, first(ctx.window).I,
+                           ReentrantLock())
+end
+
+# One block buffer per task, plus one scratch matrix per element type.
+#
+# GDAL writes from a flat buffer whose row stride it takes to be the buffer's own width, so the scratch
+# must be exactly the block's shape and densely stored: a view of a larger matrix would be read with
+# the wrong stride and place a short edge block's values several rows off. The scratch is therefore
+# reallocated whenever the block shape changes, which happens at most once per edge — every interior
+# block is `blocksize` and reuses it.
+#
+# A band of the block buffer is a `SubArray`, so it is copied here rather than written from directly.
+mutable struct GeoTIFFTaskState{G<:PairGeometry}
+    const buffer::G
+    int_scratch::Matrix{Int32}
+    float_scratch::Matrix{Float64}
+end
+
+function sink_taskstate(::PreparedGeoTIFF, ctx::SinkContext)
+    bs = min.(ctx.blocksize, size(ctx.window))
+    buffer = allocate_geometry(CartesianIndices(bs), window_geotransform(ctx.grid, ctx.window),
+                              ctx.grid.crs, ctx.nodata, ctx.coordinate)
+    return GeoTIFFTaskState(buffer, Matrix{Int32}(undef, bs), Matrix{Float64}(undef, bs))
+end
+
+# The scratch for `T`, shaped to `sz`, reallocated only if the shape has changed.
+function _scratch!(state::GeoTIFFTaskState, ::Type{Int32}, sz::NTuple{2,Int})
+    size(state.int_scratch) == sz || (state.int_scratch = Matrix{Int32}(undef, sz))
+    return state.int_scratch
+end
+
+function _scratch!(state::GeoTIFFTaskState, ::Type{Float64}, sz::NTuple{2,Int})
+    size(state.float_scratch) == sz || (state.float_scratch = Matrix{Float64}(undef, sz))
+    return state.float_scratch
+end
+
+blockdest(::PreparedGeoTIFF, state::GeoTIFFTaskState, ctx::SinkContext,
+          block::CartesianIndices{2}) = _refilled_buffer(state.buffer, ctx, block)
+
+function commitblock!(p::PreparedGeoTIFF, state::GeoTIFFTaskState, ::SinkContext,
+                      block::CartesianIndices{2}, dest::PairGeometry)
+    # The files cover the window, so a block's grid indices shift into the window's frame.
+    cols = block.indices[1] .- (p.origin[1] - 1)
+    rows = block.indices[2] .- (p.origin[2] - 1)
+
+    # Copied out of the block buffer before the lock is taken, so the serialized section is the GDAL
+    # write alone. One band at a time: the two scratch matrices are the whole per-task write cost, and
+    # a cube of all a file's bands would scale with the band count for no gain.
+    for (ds, bandfields) in zip(p.datasets, p.fields)
+        for (bandnumber, field) in enumerate(bandfields)
+            # Band numbers are positional, so an unsupported band is skipped rather than closed over:
+            # it keeps the sentinel it was created with while the bands after it stay where a consumer
+            # expects them.
+            field in p.bands || continue
+            band = getfield(dest, field)
+            buf = _scratch!(state, eltype(band), size(band))
+            copyto!(buf, band)
+            # `rows` is the Y range and `cols` the X range: the reversed order is not an axis swap
+            # GDAL corrects, it is an out-of-range access at the far edge of the raster.
+            lock(p.lock) do
+                ArchGDAL.write!(ArchGDAL.getband(ds, bandnumber), buf, rows, cols)
+            end
+        end
+    end
+    return nothing
+end
+
+function finish_sink(p::PreparedGeoTIFF)
+    for (ds, path) in zip(p.datasets, p.paths)
+        # Setting a geotransform on a dataset opened for writing is silently ineffective under
+        # conditions this extension already documents at `write_geotiffs`. Here the geotransform comes
+        # from `Rasters.create` rather than from a write, so it is read back and checked: a file that
+        # landed on GDAL's default `(0, 1, 0, 0, 0, 1)` looks georeferenced and places every value in
+        # the wrong place.
+        gt = ArchGDAL.getgeotransform(ds)
+        all(i -> gt[i] ≈ p.geotransform[i], 1:6) || error(
+            "$path has geotransform $(Tuple(gt)) but the window's is $(p.geotransform); the " *
+            "streamed output is not georeferenced where it claims to be")
+        ArchGDAL.destroy(ds)
+    end
+    return p.paths
+end
+
+export RasterInputs, GeoTIFFOutputs
 
 end
