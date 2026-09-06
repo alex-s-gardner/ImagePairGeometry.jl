@@ -124,8 +124,9 @@ function realdata_case(dir::AbstractString, params::AbstractString)
     ref_meta = JSON3.read(read(joinpath(dir, "reference_metadata.json"), String))
     sec_meta = JSON3.read(read(joinpath(dir, "secondary_metadata.json"), String))
 
-    # Built from the harvested metadata rather than through SAR.jl, so this package's test suite gains
-    # no dependency on a reader. SAR.jl's own tests assert that its bridge produces these same values.
+    # Built from the harvested metadata rather than through SARDatasets.jl, so this package's test
+    # suite gains no dependency on a reader. That package's own tests assert its bridge produces the
+    # same values.
     coord, dt = coordinate_from_metadata(ref_meta, sec_meta)
     pair = CoregisteredPair(coord; dt)
 
