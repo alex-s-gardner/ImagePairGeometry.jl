@@ -9,6 +9,7 @@
 using ImagePairGeometry
 using ImagePairGeometry: interpolate
 using SLCDatasets
+using SLCDatasets: nbursts
 using Dates
 using HDF5
 using JSON3
@@ -182,6 +183,7 @@ end
             g = s1.geometry
             sv = orbit(s1)
             coord = RadarCoordinate(s1)
+            mosaic_epoch = g.epoch
 
             # The premise that makes this a test rather than a repeat of the NISAR case.
             @testset "the premise: this epoch is not midnight" begin
@@ -252,6 +254,51 @@ end
             @testset "a pair takes its geometry from the reference alone" begin
                 @test_throws "acquisition order" CoregisteredPair(s1, s1)
                 @test repeat_interval(s1, s1) == 0.0
+            end
+
+            # A single burst. SLCDatasets asserts every burst's metadata against isce3, but nothing
+            # there builds geometry from one, and a burst is not a smaller mosaic: it carries its own
+            # epoch — ten seconds later than the mosaic's in this product — its own trimmed sensing
+            # window, and its own slant range origin. So the epoch conversion takes a different input
+            # here than in any test above.
+            @testset "a single burst" begin
+                nsw = nbursts(safe_a; swath = 2)
+                @test nsw > 1
+                mosaic = coord
+
+                for i in (1, nsw ÷ 2 + 1, nsw)
+                    bs = open_slc(safe_a; orbit = eof_a, swath = 2, burst = i)
+                    bg = bs.geometry
+                    bsv = orbit(bs)
+                    bc = RadarCoordinate(bs)
+
+                    # The burst's own epoch, not the mosaic's, and not midnight either — so this
+                    # exercises the conversion rather than inheriting a value that happens to work.
+                    @test bg.epoch != mosaic_epoch
+                    @test bg.epoch != DateTime(Date(bg.epoch))
+                    @test bc.orbit_epoch_offset == 0.0
+
+                    # A burst is a slice of the swath in azimuth, so it is shorter and its sensing
+                    # window sits inside the mosaic's.
+                    @test bg.nlines < mosaic.nlines
+                    @test bg.sensing_stop - bg.sensing_start < mosaic.sensing_start +
+                          (mosaic.nlines - 1) / mosaic.prf - mosaic.sensing_start
+
+                    # The state vectors bracket this burst, which is what makes a burst usable alone.
+                    t0 = bc.sensing_start
+                    t1 = bc.sensing_start + (bc.nlines - 1) / bc.prf
+                    @test first(bsv.time) <= t0 <= last(bsv.time)
+                    @test first(bsv.time) <= t1 <= last(bsv.time)
+                    @test interpolate(bc.orbit, t0) isa Tuple
+                    @test interpolate(bc.orbit, t1) isa Tuple
+
+                    # And the geometry is still Sentinel-1's, at the same look side and a plausible
+                    # incidence angle — a burst read with a neighbour's timing would move this.
+                    @test bc.look_side == ImagePairGeometry.LookRight
+                    @test 25 < rad2deg(bc.incidence_angle) < 50
+                    @test 2 < ImagePairGeometry.xsize(bc) < 8
+                    @test 10 < ImagePairGeometry.ysize(bc) < 25
+                end
             end
 
             # A second acquisition, so the pair path is exercised on this sensor too rather than only on
