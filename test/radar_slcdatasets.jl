@@ -157,11 +157,16 @@ end
 # numerically equal and any offset between zero and the epoch's time of day passes. Sentinel-1's epoch is
 # the middle of the day, so the two differ by hours and only the right answer lands on the orbit.
 @testset "Sentinel-1" begin
-    include(joinpath(SLCD_TEST, "sentinel1_fixture.jl"))
+    # Built by SLCDatasets' own fixture writer, so this depends on a file in another repository. Both the
+    # writer and the inputs it takes are checked for rather than assumed: a version of that package
+    # without them should skip this, not error.
+    writer = joinpath(SLCD_TEST, "sentinel1_fixture.jl")
     inputs_path = joinpath(SLCD_TEST, "reference", "sentinel1_inputs.json")
-    if !isfile(inputs_path)
-        @info "skipping the Sentinel-1 conversion; SLCDatasets has no committed S1 inputs"
+    if !isfile(writer) || !isfile(inputs_path)
+        @info """skipping the Sentinel-1 conversion; this SLCDatasets has no committed S1 fixture
+                 writer and inputs""" writer = isfile(writer) inputs = isfile(inputs_path)
     else
+        include(writer)
         mktempdir() do dir
             inputs = JSON3.read(read(inputs_path, String))
             safe, eof = write_s1_fixture(dir, inputs)
