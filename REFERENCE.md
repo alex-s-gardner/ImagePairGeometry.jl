@@ -92,6 +92,45 @@ produces, since that is the quantity a shift would corrupt — and the bounds si
 `floor`/`ceil` boundary that PROJ's last bits cannot move an edge, while a transcription error would
 move it by whole points.
 
+## The radar path on real data
+
+The committed radar fixtures use a synthetic circular orbit and synthetic input rasters, because that
+keeps them small enough to commit and runnable with no Python and no network. What they cannot exercise
+is a real acquisition: a perturbed orbit, a real range and azimuth scale, and parameter rasters with
+their own nodata pattern.
+
+`test/radar_realdata.jl` closes that gap against `test/reference/gen_radar_realdata.py`, on the NISAR
+pair behind the ITS_LIVE product for Jakobshavn Isbræ —
+`NISAR_L1_PR_RSLC_003_170_D_053_..._20251028T235201` and its 48-day repeat — over the ITS_LIVE 120 m
+Greenland rasters, a 2242 × 2086 window of 4,676,812 points. The nine reference GeoTIFFs are about
+500 MB, so they are generated rather than committed and the test runs only when `IPG_REALDATA_DIR` names
+them.
+
+| band group | agreement |
+|---|---|
+| range index, chip sizes, stable-surface mask | **bitwise** |
+| azimuth index and the extents from it (`location_y`, `offset_y`, `search_y`) | ≤ 1 index, on ≤ 0.3% of points |
+| floats dividing by `dr` (`off2v*_dx`) | 1.7e-7 relative |
+| scale factors | 6.5e-9 relative |
+| floats dividing by the along-track step (`off2vx_dy`, `off2vy_dy`, `off2vy_dr`) | 3.5e-4 relative |
+
+The count of computed points matches the reference exactly — 2,296,796 of the window — so the band
+agreement is not sentinels matching sentinels.
+
+Two things differ from the fixture cases, both properties of real inputs rather than of the kernel.
+
+*The along-track bound is 3.5e-4, not 2e-4.* This is the reference's ~0.0013-line azimuth offset,
+documented under *Tier A* above, reaching an output: it displaces the platform by `|v| · 0.0013 / prf`,
+about 6.5 mm, which against this acquisition's 4.97 m along-track step is a few times 1e-4. The bands
+dividing by the range spacing inherit none of it, which is why they sit four orders tighter. The
+fixture's synthetic orbit produces a smaller residual, so 2e-4 was never a general bound.
+
+*The missing-value sentinel is −32767, not 0.0.* The radar path takes its one sentinel from the
+reference-velocity band (`geogridRadar.cpp:509-512`). The ITS_LIVE rasters declare that band's nodata
+explicitly; the synthetic fixture declares one on the DEM alone, so `GetNoDataValue` finds none on `vx`
+and returns 0.0. Passing 0.0 against real inputs treats every point of stationary ground as missing,
+which is most of a scene.
+
 ## Deliberate divergences
 
 Each is a case where reproducing the reference exactly would mean reproducing undefined behavior
@@ -319,6 +358,17 @@ times spanning the whole orbit domain, including the clamped brackets at either 
 |---|---|---|
 | position | 1.2e-8 m | 93 / 20001 |
 | velocity | 1.4e-9 m/s | 0 / 20001 |
+
+Those are the numbers on the fixtures' **analytic circular** orbit. On a **real** orbit at the same 10 s
+spacing and state vector count they are six orders larger — 1.0e-2 m and 1.2e-2 m/s, measured on the
+NISAR granule behind the real-data comparison — because an eight-term series fits a perfect circle far
+better than it fits a perturbed trajectory, and a real one is perturbed: that granule's radius varies by
+1033 m over 340 s, and its reported velocities differ from its own position derivative by 0.13 m/s.
+
+A centimeter is 1e-2 of a NISAR range sample and cannot move a rounded index, so this does not change
+whether the option is safe — but the analytic figure alone would understate what a caller sees, so both
+are recorded. `benchmark/run_chebyshev.jl` measures both, the real-orbit case when `IPG_REALDATA_DIR`
+names a real-data reference directory.
 
 The error is the coefficient recovery, not the summation. Clenshaw is backward stable; recovering eight
 coefficients at Earth-radius magnitudes carries about 1e-15 relative, which is 1e-8 m. This is why the

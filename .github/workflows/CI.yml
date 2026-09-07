@@ -68,6 +68,55 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+  extension:
+    name: SLCDatasets extension - Julia ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['lts', '1']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: alex-s-gardner/FastGeoProjections.jl
+          ref: main
+          path: deps/FastGeoProjections.jl
+      - uses: actions/checkout@v6
+        with:
+          repository: alex-s-gardner/SLCDatasets.jl
+          ref: main
+          path: deps/SLCDatasets.jl
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v3
+      # `ImagePairGeometrySLCDatasetsExt` needs SLCDatasets, which is unregistered, and this package
+      # needs FastGeoProjections from `main`. That forces three things:
+      #
+      # `Pkg.develop` by path rather than `Pkg.add` by URL, because `Pkg.add` promotes a weak dependency
+      # into `[deps]` and deletes the `[weakdeps]` entry, which stops the extension loading at all — the
+      # tests then pass while testing nothing.
+      #
+      # The test environment rather than the package environment, since developing into the package
+      # environment rewrites `Project.toml` for the same reason.
+      #
+      # `include("test/runtests.jl")` rather than `Pkg.test`, because Julia 1.10 fails with
+      # `can not merge projects` when the environment it merges holds a path-sourced package the package
+      # environment also names.
+      - name: Run the suite with SLCDatasets
+        shell: julia --color=yes {0}
+        run: |
+          import Pkg
+          Pkg.activate("test")
+          Pkg.develop([Pkg.PackageSpec(path = "deps/FastGeoProjections.jl"),
+                       Pkg.PackageSpec(path = "deps/SLCDatasets.jl"),
+                       Pkg.PackageSpec(path = ".")])
+          Pkg.instantiate()
+          include(joinpath(pwd(), "test", "runtests.jl"))
   docs:
     name: Documentation
     runs-on: ubuntu-latest

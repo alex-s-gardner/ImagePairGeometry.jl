@@ -1,6 +1,10 @@
 [deps]
+ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 FastGeoProjections = "981663e8-0c94-46dd-b2cf-efc8480900ec"
 ImagePairGeometry = "7d3defa8-4bb6-45cf-b5d0-7628f127c0fd"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
+Rasters = "a3a2b9e3-a471-40c9-b274-f788e487c689"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"

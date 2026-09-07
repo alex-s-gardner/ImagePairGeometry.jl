@@ -58,6 +58,32 @@ There is no radar [`coregister`](@ref): `testGeogrid.py:427-470` takes every rad
 reference acquisition and the secondary only for the repeat interval, so the radar grid is image 1's
 outright.
 
+## Building one from a real product
+
+Those eleven numbers come from a product's metadata, and reading one is deliberately not this package's
+job — it depends on no IO stack, so a caller wanting the kernel does not acquire an HDF5 or XML parser
+with it. [SLCDatasets.jl](https://github.com/alex-s-gardner/SLCDatasets.jl) reads a NISAR product, and an
+extension here takes the acquisition in place of the eleven numbers:
+
+```julia
+using ImagePairGeometry, SLCDatasets
+
+reference = open_slc(url1)          # metadata only; the granule is not transferred
+secondary = open_slc(url2)
+pair = CoregisteredPair(reference, secondary)
+```
+
+These are the same constructors as above: `RadarCoordinate(acquisition)` and
+`CoregisteredPair(reference, secondary)`, computing the incidence angle and taking the repeat interval
+from the two sensing times. They also check three things a hand-assembled coordinate can get wrong
+without failing: that the state vectors are uniformly spaced, that they bracket the acquisition — an
+out-of-range solve extrapolates rather than throwing — and that the azimuth times and the orbit are on
+one epoch, which is what makes `orbit_epoch_offset` a constant.
+
+For a real NISAR acquisition the offset works out to zero, because the product's epoch *is* midnight of
+the acquisition day. That is a property of the format rather than a general one, which is why it is
+computed rather than assumed.
+
 ## Two time scales
 
 `sensing_start` is seconds since midnight of the acquisition day, and the orbit is on its own epoch.
@@ -148,10 +174,20 @@ however fast interpolation becomes.
 
 Every integer band stays bitwise and blocking invariance is kept — the interpolant is still a pure
 function of time, so points remain independent, which is the difference from [`WarmStart`](@ref). What
-is given up is the interpolant's own bitwise position agreement with isce3: position moves by up to
-1.2e-8 m, which reaches an output as roughly 1e-9 of a pixel and leaves the float bands within 6.8e-9
-relative. The default `Orbit` is unchanged, and `REFERENCE.md` records why the strict path stays the
-default despite the negligible magnitude.
+is given up is the interpolant's own bitwise position agreement with isce3.
+
+How much position moves depends on the orbit, by six orders of magnitude, so both figures are worth
+stating. On the analytic circular orbit the fixtures use it is 1.2e-8 m, reaching an output as roughly
+1e-9 of a pixel and leaving the float bands within 6.8e-9 relative. On a **real** orbit at the same
+spacing and state vector count it is 1.0e-2 m: an eight-term series fits a perfect circle far better
+than it fits a perturbed trajectory, and a real one is perturbed — a NISAR granule's radius varies by
+about a kilometer over 340 s, and its reported velocities differ from its own position derivative by
+0.13 m/s. A centimeter is still 1e-2 of a NISAR range sample and cannot move a rounded index, so the
+option remains safe to offer; it is the analytic figure that is unrepresentative rather than the
+option that is worse than described. `benchmark/run_chebyshev.jl` measures both.
+
+The default `Orbit` is unchanged, and `REFERENCE.md` records why the strict path stays the default
+despite the negligible magnitude.
 
 ## API
 
