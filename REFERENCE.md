@@ -500,10 +500,11 @@ but the construction is matched rather than "corrected" to `always_xy = true`.
 
 ## The radar path
 
-Implemented and verified against isce3: the reference ellipsoid and TCN basis, the Hermite orbit
-interpolation, the 51-iteration `geo2rdr` solve, `rdr2geo`, and `RadarCoordinate` with its footprint
-and ground pixel sizes. Not built: the per-point kernel, so `pairgeometry` cannot take a radar pair.
-The remaining work, and the reproduced quirks it will need, are tracked in `RADAR_PLAN.md`.
+Complete and verified against isce3 — the same objects `geogridRadar.cpp` links against: the reference
+ellipsoid and TCN basis, the Hermite orbit interpolation, the `geo2rdr` and `rdr2geo` solves, and
+`RadarCoordinate` with its footprint and ground pixel sizes. `pairgeometry` takes a radar pair and
+produces all nine outputs, asserted against the compiled reference on eight synthetic fixture cases and
+on a real NISAR pair — see *The radar path on real data* above.
 
 ### The ground pixel sizes come from geometry
 
