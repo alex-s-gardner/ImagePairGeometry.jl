@@ -14,9 +14,9 @@ using HDF5
 using JSON3
 using Test
 
-# The fixture and its writer live in SLCDatasets, next to the reader they describe.
-const SARD_TEST = joinpath(dirname(dirname(pathof(SLCDatasets))), "test")
-include(joinpath(SARD_TEST, "fixture.jl"))
+# The fixtures and their writers live in SLCDatasets, next to the readers they describe.
+const SLCD_TEST = joinpath(dirname(dirname(pathof(SLCDatasets))), "test")
+include(joinpath(SLCD_TEST, "fixture.jl"))
 
 mktempdir() do dir
     path = write_fixture_product(joinpath(dir, "fixture_rslc.h5"))
@@ -148,5 +148,62 @@ end
         split = override(FIXTURE, (:orbit => :epoch) => "seconds since 2025-10-27T00:00:00")
         s = open_slc(write_fixture_product(joinpath(dir, "split.h5"), split))
         @test_throws "Converting between them is not implemented" RadarCoordinate(s)
+    end
+end
+
+
+# Sentinel-1, which is the case that distinguishes a correct epoch conversion from a lucky one. NISAR
+# puts its epoch at midnight, so `sensing_start` on the azimuth-index scale and on the orbit scale are
+# numerically equal and any offset between zero and the epoch's time of day passes. Sentinel-1's epoch is
+# the middle of the day, so the two differ by hours and only the right answer lands on the orbit.
+@testset "Sentinel-1" begin
+    include(joinpath(SLCD_TEST, "sentinel1_fixture.jl"))
+    inputs_path = joinpath(SLCD_TEST, "reference", "sentinel1_inputs.json")
+    if !isfile(inputs_path)
+        @info "skipping the Sentinel-1 conversion; SLCDatasets has no committed S1 inputs"
+    else
+        mktempdir() do dir
+            inputs = JSON3.read(read(inputs_path, String))
+            safe, eof = write_s1_fixture(dir, inputs)
+            s = open_slc(safe; orbit = eof)
+            g = s.geometry
+            sv = orbit(s)
+
+            # The premise: this product's epoch is *not* midnight, which is what makes it a test.
+            @test g.epoch != DateTime(Date(g.epoch))
+            @test SLCDatasets.epoch_offset(g) > 3600
+
+            coord = RadarCoordinate(s)
+
+            @testset "the azimuth times land on the orbit" begin
+                # The bug this guards against added the epoch's time of day to `sensing_start`, pushing
+                # every solve hours outside the state vectors. It threw here rather than returning a
+                # wrong answer, but only for a product whose epoch is not midnight.
+                @test coord.orbit_epoch_offset == 0.0
+                t0 = coord.sensing_start + coord.orbit_epoch_offset
+                t1 = coord.sensing_start + (coord.nlines - 1) / coord.prf + coord.orbit_epoch_offset
+                @test first(sv.time) <= t0 <= last(sv.time)
+                @test first(sv.time) <= t1 <= last(sv.time)
+                @test ImagePairGeometry.interpolate(coord.orbit, t0) isa Tuple
+            end
+
+            @testset "the geometry is Sentinel-1's, not NISAR's" begin
+                # Right-looking, where NISAR is left: the one field whose value differs by sensor rather
+                # than by acquisition, and the reason it is read rather than assumed.
+                @test coord.look_side == ImagePairGeometry.LookRight
+                @test coord.starting_range === g.starting_range
+                @test coord.dr === g.range_pixel_spacing
+                @test coord.prf === g.prf
+                @test coord.wavelength === g.wavelength
+            end
+
+            @testset "the ground pixel sizes are IW-like" begin
+                # C-band IW: a few metres in ground range and around fifteen along track. A wrong look
+                # side or a transposed orbit puts the incidence angle far outside this.
+                @test 25 < rad2deg(coord.incidence_angle) < 50
+                @test 2 < ImagePairGeometry.xsize(coord) < 8
+                @test 10 < ImagePairGeometry.ysize(coord) < 25
+            end
+        end
     end
 end
