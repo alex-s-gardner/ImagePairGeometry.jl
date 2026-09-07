@@ -16,18 +16,18 @@ module ImagePairGeometrySLCDatasetsExt
 # vectors everywhere measured, but a product that did not would otherwise be reported by `Orbit`'s own
 # error, which names state vector indices rather than the product.
 #
-# The two clocks. `RadarCoordinate` measures the azimuth index against seconds-since-midnight and
-# interpolates the orbit against the orbit's own epoch, carrying `orbit_epoch_offset` between them. A
-# `RadarGeometry` reports both times against one epoch, so `SLCDatasets.epoch_offset` supplies the
-# constant — computed rather than assumed zero, which it happens to be for NISAR only because its epoch
-# *is* midnight of the acquisition day.
+# The two clocks. `orbit_epoch_offset` is what `RadarCoordinate` adds to a `sensing_start`-scale time to
+# reach the orbit's scale. A `RadarGeometry` reports the azimuth times and the state vector times against
+# *one* epoch — that is asserted below — so on this path the two scales already coincide and the offset is
+# zero. It is not the epoch's time of day: adding that would move every solve off the orbit by hours,
+# which for NISAR is invisible because its epoch is midnight and the two are equal.
 #
 # Coverage. A solve at a time the orbit does not bracket extrapolates rather than failing, so the
 # bracket is checked before the coordinate is built.
 
 using ImagePairGeometry: ImagePairGeometry, Orbit, RadarCoordinate, CoregisteredPair,
                          incidence_angle, chebyshev_orbit, LookLeft, LookRight
-using SLCDatasets: SLCDatasets, SLC, StateVectors, orbit, repeat_interval, epoch_offset
+using SLCDatasets: SLCDatasets, SLC, StateVectors, orbit, repeat_interval
 
 # The two look-side enums are distinct types with the same meaning; neither package imports the other's.
 _look(side) = side == SLCDatasets.LookLeft ? LookLeft : LookRight
@@ -88,7 +88,9 @@ function ImagePairGeometry.RadarCoordinate(s::SLC; zrange = nothing, chebyshev::
     kwargs = (; orbit = orb, starting_range = g.starting_range, dr = g.range_pixel_spacing,
               sensing_start = g.sensing_start, prf = g.prf, nsamples = g.nsamples,
               nlines = g.nlines, look_side = _look(g.look_side), wavelength = g.wavelength,
-              orbit_epoch_offset = epoch_offset(g))
+              # Zero, not the epoch's time of day: `RadarGeometry` puts both clocks on one epoch,
+              # asserted above, so a `sensing_start`-scale time is already an orbit-scale time.
+              orbit_epoch_offset = 0.0)
     ia = zrange === nothing ? incidence_angle(; kwargs...) : incidence_angle(; kwargs..., zrange)
     return RadarCoordinate(; kwargs..., incidence_angle = ia)
 end
