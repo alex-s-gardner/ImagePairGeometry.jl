@@ -43,6 +43,9 @@ export pixel_offset, height_sensitivity, OffsetField, LatticeOffsetField
 # pair is one a low-order fit describes needs both.
 export OffsetFit, fit_offset, offset_fit_terms
 export OFFSET_FIT_MAX_ORDER, OFFSET_FIT_MIN_NODES_PER_TERM
+# The sinc kernel. `SINC_*` are exported because a caller sizing a chip or a halo needs the same numbers
+# the kernel was built with.
+export SincKernel, sinc_interpolate, SINC_LEN, SINC_HALF, SINC_ONE, SINC_SUB
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
@@ -121,6 +124,9 @@ include("radar/rdr2rdr.jl")
 # After `misregistration.jl`: the fit samples an offset field, though it takes any callable of `(x, y, z)`
 # rather than a field type specifically.
 include("offsetfit.jl")
+# Independent of everything above it: the kernel takes a matrix and a position and knows nothing about
+# pairs or coordinates.
+include("resample.jl")
 
 """
     mapgrid(dem) -> MapGrid
