@@ -39,6 +39,10 @@ export ImageFootprint, CoregisteredPair, coregister
 # `secondary_offset_coordinate` field exists only to feed it. `height_sensitivity` says whether that
 # offset is a pixel shift at all or mostly parallax, which a caller has to be able to ask.
 export pixel_offset, height_sensitivity, OffsetField, LatticeOffsetField
+# The polynomial form, and the constants its order selection rests on — a caller checking whether their
+# pair is one a low-order fit describes needs both.
+export OffsetFit, fit_offset, offset_fit_terms
+export OFFSET_FIT_MAX_ORDER, OFFSET_FIT_MIN_NODES_PER_TERM
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
@@ -108,6 +112,9 @@ include("interpolate.jl")
 # solving half of the radar method is in `radar/rdr2rdr.jl`.
 include("misregistration.jl")
 include("radar/rdr2rdr.jl")
+# After `misregistration.jl`: the fit samples an offset field, though it takes any callable of `(x, y, z)`
+# rather than a field type specifically.
+include("offsetfit.jl")
 
 """
     mapgrid(dem) -> MapGrid

@@ -16,6 +16,7 @@ include("npz.jl")
     @time @testset "vecmath" begin include("vecmath.jl") end
     @time @testset "coregister" begin include("coregister.jl") end
     @time @testset "misregistration" begin include("misregistration.jl") end
+    @time @testset "offset fit" begin include("offsetfit.jl") end
     @time @testset "window" begin include("window.jl") end
     @time @testset "kernel" begin include("kernel.jl") end
     @time @testset "velocity conversion" begin include("velocity.jl") end
