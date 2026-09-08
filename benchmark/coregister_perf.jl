@@ -15,7 +15,7 @@ using ImagePairGeometry
 using ImagePairGeometry: CoregisteredPair, RadarCoordinate, Orbit, LookRight, incidence_angle,
                          MapGrid, OffsetField, LatticeOffsetField, pixel_offset, fit_offset,
                          height_sensitivity, SincKernel, sinc_interpolate, ResampledSLC,
-                         Ellipsoid, rdr2geo, SINC_ONE
+                         Ellipsoid, rdr2geo, SINC_ONE, TOPSCarrier
 using BenchmarkTools
 using Random
 using StaticArrays: SVector
@@ -161,3 +161,31 @@ for (name, npix) in (("S1 IW subswath", 1500 * 22000), ("NISAR RSLC swath", 2484
     println("  ", rpad(name, 18), " whole: ", round(persample * npix; digits = 1),
             " s single-threaded")
 end
+
+println()
+println("=== the TOPS deramp ===")
+# The carrier is evaluated per chip tap, not per output sample: a TOPS ramp varies with slant range as well
+# as azimuth, so nothing may be hoisted out of the inner loop the way the Doppler's per-row phasor is. That
+# is `SINC_ONE^2` evaluations and as many `cos`/`sin` pairs, which is where the cost goes.
+#
+# The range variation is small but not negligible — up to 0.07 rad across a chip at a burst edge, which is
+# 4 degrees of phase — so hoisting it would be an approximation rather than an optimization. This number is
+# the price of a correct deramp.
+ka(r) = -2300.0 + 0.5e-3 * (r - 8.0e5)
+fdc(r) = -40.0 + 0.25e-3 * (r - 8.0e5)
+carrier = TOPSCarrier(; azimuth_fm_rate = ka, doppler_centroid = fdc, ks = 7592.0,
+                      eta_ref_near = fdc(8.0e5) / ka(8.0e5), starting_range = 8.0e5,
+                      range_pixel_spacing = 2.33, azimuth_time_interval = 2.0e-3,
+                      center_line = 751.0)
+rc = ResampledSLC(big, off; kernel = K, carrier)
+cb = @benchmark $rc[100, 100]
+one_carrier = @benchmark $carrier(100.0, 120.0)
+println("  one carrier evaluation:  ",
+        BenchmarkTools.prettytime(minimum(one_carrier).time), " x ", SINC_ONE^2 + 2, " per sample")
+println("  one output sample:       ", BenchmarkTools.prettytime(minimum(cb).time), "  ",
+        BenchmarkTools.prettymemory(minimum(cb).memory))
+println("  vs no carrier:           ",
+        round(minimum(cb).time / minimum(sb).time; digits = 1), "x")
+deramped = minimum(cb).time * 1e-9
+println("  S1 IW subswath whole:    ", round(deramped * 1500 * 22000; digits = 1),
+        " s single-threaded")

@@ -198,15 +198,47 @@ single-threaded and a NISAR swath 59 s.
 Out-of-bounds reads and unplaceable points (a `NaN` offset) give the fill value, `NaN + NaN·im` by default
 — not zero, which is a sample value and would be indistinguishable from real data.
 
-!!! warning "Not for TOPS data, and it will refuse"
-    Sentinel-1 IW steers the antenna in azimuth across each burst, putting a steep ramp on the azimuth
-    phase. Interpolating those samples without removing the ramp first aliases it, worst at the burst
-    edges, and the result is a phase-corrupted image that looks entirely valid.
+## TOPS data carries an azimuth ramp
 
-    `SLCDatasets` does not yet parse the three annotation fields a deramp needs — call
-    `SLCDatasets.deramp_parameters` to see which — so `ResampledSLC(::SLC, offset)` refuses a TOPS
-    acquisition. Pass `amplitude_only = true` if the magnitudes are all you will read, which is insensitive
-    to the ramp and is what most of this pipeline does with Sentinel-1.
+Sentinel-1 IW steers the antenna in azimuth across each burst, putting a steep phase ramp on the samples —
+some thousands of radians between a burst's centre and its edge. Interpolating without removing it first
+aliases it, worst where it is steepest, and the result is a phase-corrupted image that looks entirely valid.
+
+So the phase is removed before the sinc convolution and reapplied for the interpolated position.
+[`TOPSCarrier`](@ref) evaluates it, and with `SLCDatasets` loaded it is built from the product's own
+annotation:
+
+```julia
+using ImagePairGeometry, SLCDatasets
+
+b = bursts("S1A_....SAFE"; orbit = "S1A_....EOF", swath = 2)
+# The carrier is built from the annotation; nothing extra to pass.
+r = ResampledSLC(b[1], offset)
+```
+
+Measured on a synthetic ramp: interpolating with the carrier removed holds a unit-magnitude signal to
+6.0e-7, and leaving it in loses 1.1e-2 — the aliasing, four orders of magnitude larger.
+
+**The deramp costs 12.5×**: 2.0 µs per output sample against 160 ns without, so a whole S1 IW subswath is 66 s
+single-threaded rather than 5.3 s. The carrier is evaluated at every chip tap — 81 of them, plus two — because
+a TOPS ramp varies with slant range as well as azimuth, so nothing can be hoisted out of the inner loop the
+way the Doppler's per-row phasor is. Hoisting it would be an approximation: the range variation reaches
+0.07 rad across one chip at a burst edge, about 4° of phase. The path *without* a carrier is unchanged.
+
+`amplitude_only = true` skips the deramp, since `abs` discards the phase. That is what most of this pipeline
+does with Sentinel-1, and it is a keyword rather than a default so the choice is visible at the call site —
+and on this cost, it is also the fast path by an order of magnitude.
+
+!!! note "A merged subswath is refused"
+    The ramp is referenced to each burst's own centre, so a merge carries one per burst rather than one for
+    the image, and a chip spanning a seam has no single answer. Resample the bursts individually, or pass an
+    explicit `carrier` covering the merged grid. `SLCDatasets.burst_at` says which burst a merged line
+    belongs to.
+
+The verification standard here is weaker than elsewhere on this path, and deliberately stated: the deramp
+lives in the Python `s1reader` package rather than in isce3's C++, so `test/reference/topsramp.json` is
+generated from that arithmetic and agreement is to 2.9e-16 relative rather than to the bit. See
+`REFERENCE.md`.
 
 ## What this does *not* do on the projected path
 
@@ -239,5 +271,6 @@ this is reached in practice.
 ```@autodocs
 Modules = [ImagePairGeometry]
 Order = [:type, :constant, :function]
-Pages = ["misregistration.jl", "offsetfit.jl", "resample.jl", "radar/rdr2rdr.jl"]
+Pages = ["misregistration.jl", "offsetfit.jl", "resample.jl", "radar/rdr2rdr.jl",
+         "radar/topsramp.jl"]
 ```
