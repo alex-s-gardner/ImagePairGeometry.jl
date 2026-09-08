@@ -353,29 +353,37 @@ costs only the windows taken from it. That composes: `amplitude(resample(...))` 
 chips a correlator asks for and no more, and `AutoRIFT`'s blocked entry point already reads its
 inputs by window.
 
-## TOPS deramping is out of scope, and blocked upstream
+## TOPS deramping — done, in three parts
 
 Sentinel-1 IW is TOPS: the antenna sweeps in azimuth within each burst, so the Doppler centroid
 ramps steeply across the burst and the azimuth phase carries that ramp. Interpolating complex TOPS
 samples without first removing the ramp aliases it, and the error grows toward the burst edges where
-the ramp is steepest. The standard treatment removes the deramp and demodulation phase, resamples,
-and reapplies it on the output grid.
+the ramp is steepest. The treatment removes the phase, resamples, and reapplies it on the output
+grid.
 
-This plan does not implement it, for two reasons.
+Deferred when this plan was written, on the grounds that nothing needed it yet and that its inputs
+were unparsed. Both have since changed, and it landed across the three packages:
 
-It is not needed by anything here yet. Path B never touches the samples. Path A on a NISAR RSLC is
-stripmap at zero Doppler, so the Doppler LUT is flat and the existing chip-phase handling is
-sufficient — which is why Path A is worth building before deramping exists.
+- `SLCDatasets` parses the azimuth FM rate polynomials, the Doppler centroid estimates and the
+  azimuth steering rate, and `deramp_parameters` returns them. `burst_at` resolves a merged image's
+  line to its burst. The orbit stays out — the sweep term needs `|v|` interpolated at the burst mid,
+  and that package holds tabulated state vectors rather than a trajectory.
+- Here, `ResampledSLC`'s `doppler` hook became a `carrier` hook taking the azimuth *phase*: a
+  Doppler frequency cannot express a phase quadratic about a burst centre and varying with slant
+  range. `TOPSCarrier` (`src/radar/topsramp.jl`) evaluates it, and the extension builds one from a
+  product's annotation and its `Orbit`.
+- `AutoRIFT` needs nothing. Its own `Deramp` is a different operation — linear, estimated from the
+  chip's own pixels, and not reapplied — and by the time a chip reaches the correlator the
+  interpolation is already done.
 
-It is also blocked by its inputs. Deramping needs the azimuth FM rate polynomials, the Doppler
-centroid estimates and the azimuth steering rate from the Sentinel-1 annotation. `SLCDatasets`
-parses none of the three (`src/sentinel1.jl` reads the geometry scalars and the valid-region arrays
-only), so there is nothing to deramp *with* until that reader is extended. That extension belongs in
-`SLCDatasets`, next to the annotation parsing, not here.
+A merged subswath is still refused: the ramp is referenced to each burst's own centre, so a merge
+carries one per burst and a chip spanning a seam has no single answer. Amplitude-only use remains
+permitted throughout, since `abs` is insensitive to the ramp.
 
-**CHUNK-010 makes this a refusal rather than a silent wrong answer**: the complex resampling path
-checks whether the acquisition is TOPS and throws, naming the missing metadata. Amplitude-only use
-of the same path is permitted, since `abs` is insensitive to the ramp.
+Verification is weaker here than elsewhere on this path and says so. The deramp lives in the Python
+`s1reader` rather than in isce3's C++, so `test/reference/topsramp.json` is generated from that
+arithmetic and agreement is relative (2.9e-16 measured) rather than bitwise. The resampler's own
+144-sample isce3 fixture stayed bitwise across the hook change, which was the gate on making it.
 
 ## Where the code lives
 

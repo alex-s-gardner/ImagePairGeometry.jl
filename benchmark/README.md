@@ -13,9 +13,9 @@ cost and its breakdown, the statistical profile, storage scaling, and the accura
 sweeps behind `GEO2RDR_ITERATIONS`, `RANGE_DOPPLER_ITERATIONS` and `WarmStart`.
 
 `coregister_perf.jl` measures the coregistration path: one `pixel_offset`, what evaluating one per sample
-of a real swath would cost, the lattice's build-against-read tradeoff, the polynomial fit by order, and the
-resampler's throughput per sample and per window. The numbers `docs/src/coregistration.md` quotes come from
-it, so a change to any of those should re-run it.
+of a real swath would cost, the lattice's build-against-read tradeoff, the polynomial fit by order, the
+resampler's throughput per sample and per window, and what a TOPS deramp adds to it. The numbers
+`docs/src/coregistration.md` quotes come from it, so a change to any of those should re-run it.
 
 `run_chebyshev.jl` is the gate on `chebyshev_orbit`: the interpolant's accuracy over the whole orbit
 domain, the cost on a window, and every output band against the default Hermite path. Its accuracy

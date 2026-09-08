@@ -213,6 +213,20 @@ end
     small = SincKernel(kernel_length = 4, decimation = 16)
     @test size(small.weights) == (16, 4)
     @test kernel_length(small) == 4 && decimation(small) == 16
+
+    # `sinc_interpolate` takes any of them — the caller supplies the chip, so its size is the caller's.
+    chip = ComplexF32.(randn(5, 5) .+ 1im .* randn(5, 5))
+    @test sinc_interpolate(small, chip, 3.25, 3.5) isa ComplexF32
+
+    # `ResampledSLC` does not. Its chip is `SINC_ONE` on a side as a compile-time constant, which is what
+    # keeps it off the heap, so another tap count would read a stencil of the wrong extent — and the sizes
+    # would still agree with each other, making it silent. Refused with the reason instead.
+    S = ComplexF32.(randn(64, 64) .+ 1im .* randn(64, 64))
+    off = fill((0.5, 0.5), 32, 32)
+    r = ResampledSLC(S, off; kernel = small)
+    @test_throws "4 taps" r[20, 20]
+    # The default is accepted, which is the case every caller has.
+    @test ResampledSLC(S, off)[20, 20] isa ComplexF32
 end
 
 const RESAMP_FX = JSON3.read(read(joinpath(@__DIR__, "reference", "resamp.json"), String))

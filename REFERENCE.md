@@ -854,7 +854,22 @@ input, and faulting is not a behavior with a value to reproduce, so `_reachable`
 because those lines are asserted bitwise and a branch among them would sit on the path that exactness rests
 on. The constant-height path cannot reach the guard, so it costs the reference's behaviour nothing.
 
-*TOPS is refused rather than mishandled.* isce3's resampler takes a Doppler LUT and assumes the caller has
-dealt with any azimuth ramp. Here a TOPS acquisition is refused on the complex path, because `SLCDatasets`
-does not yet parse the three annotation fields a deramp needs. Amplitude-only use is permitted, since
-taking the magnitude discards the phase.
+*The resampler takes an azimuth phase where isce3 takes a Doppler frequency.* `resampleToCoords` evaluates a
+Doppler LUT per output pixel and turns it into a phase linear in the chip row. That cannot express a TOPS
+azimuth ramp, which is quadratic about each burst's centre and varies with slant range, so the hook here is
+the phase itself and the Doppler is one case of it — `DopplerCarrier` preserves the reference's own
+association of the arithmetic, which is what keeps the resampler bitwise. A carrier is used only as a
+difference from the chip's integer centre, so the two forms agree wherever both apply.
+
+*The TOPS deramp has no C++ reference and is not held bitwise.* It lives in the Python `s1reader`
+(`Sentinel1BurstSlc.az_carrier_components`) rather than in isce3's C++, so `test/reference/topsramp.json` is
+generated from that arithmetic on synthetic burst parameters and [`TOPSCarrier`](@ref) is held to 1e-12
+relative — measured at 2.9e-16 over 56 points. What the fixture pins is the conventions a round-trip test
+would leave green while wrong: the polynomial argument (`range - r0`), the zero-based `n_lines // 2` centre
+line, and the sign of the reference time. The behaviour is pinned separately by analytic invariants; see
+`test/topsramp.jl`.
+
+*A merged subswath is refused on the complex path.* The ramp is referenced to each burst's own centre, so a
+merge carries one per burst and a chip spanning a seam has no single carrier. isce3's Sentinel-1 workflow
+deramps per burst before merging, which is the same conclusion reached by refusing. Amplitude-only use is
+permitted throughout, since taking the magnitude discards the phase.

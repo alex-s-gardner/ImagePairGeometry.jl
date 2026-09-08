@@ -26,7 +26,7 @@ converts its result to velocity.
 """
 module ImagePairGeometry
 
-using StaticArrays: SVector, MMatrix
+using StaticArrays: SVector, SMatrix
 using Extents: Extent
 import GeoFormatTypes as GFT
 import GeoInterface
@@ -49,6 +49,10 @@ export SincKernel, sinc_interpolate, SINC_LEN, SINC_HALF, SINC_ONE, SINC_SUB
 # The lazy resampled image. Takes plain matrices, so a reader supplies the samples and this package
 # supplies the geometry — the same boundary the rest of the radar path draws.
 export ResampledSLC
+# The TOPS azimuth carrier, which `ResampledSLC` removes before interpolating and reapplies after. Exported
+# because a caller resampling Sentinel-1 complex samples has to supply one; the extension builds it from a
+# product's annotation.
+export TOPSCarrier
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
@@ -130,6 +134,9 @@ include("offsetfit.jl")
 # Independent of everything above it: the kernel takes a matrix and a position and knows nothing about
 # pairs or coordinates.
 include("resample.jl")
+# After `resample.jl`, whose `carrier` hook this is written for. Arithmetic only — the annotation it needs
+# comes from `SLCDatasets`, through the extension.
+include("radar/topsramp.jl")
 
 """
     mapgrid(dem) -> MapGrid

@@ -125,6 +125,51 @@ function ImagePairGeometry.CoregisteredPair(reference::SLC, secondary::SLC; kwar
 end
 
 """
+    TOPSCarrier(d::SLCDatasets.DerampParameters, orbit::Orbit; epoch::DateTime) -> TOPSCarrier
+
+One burst's azimuth carrier, from the annotation and an orbit.
+
+`SLCDatasets.deramp_parameters` supplies every term but the along-track speed, which needs the trajectory
+interpolated at the burst's mid-time — `orbit` is where that comes from, and why this is not a method on the
+reader.
+
+`epoch` is the instant the orbit's times are measured from, which is what reduces the burst's mid-time to the
+orbit's own scale. A product's `geometry.epoch` is it; the orbit's `epoch` must equal it, which the caller of
+this checks.
+
+The antenna steering rate is degrees per second in the annotation and radians per second in the arithmetic,
+so the conversion happens here.
+"""
+function ImagePairGeometry.TOPSCarrier(d::SLCDatasets.DerampParameters, orbit::Orbit; epoch)
+    # `epoch` is a `DateTime`, but this extension may not name `Dates` as a dependency — an extension sees
+    # only its parent's — so the type is left to `UtcTime`'s own constructor to enforce.
+    t_mid = SLCDatasets.seconds_between(SLCDatasets.UtcTime(epoch, 0.0), d.burst_mid)
+    _, v = ImagePairGeometry.interpolate(orbit, t_mid)
+    vs = sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3])
+
+    steer = deg2rad(d.azimuth_steering_rate)
+    ks = 2 * vs * steer / d.wavelength
+
+    ka, fdc = d.azimuth_fm_rate, d.doppler_centroid
+    near = Float64(fdc(d.starting_range))
+    ka_near = Float64(ka(d.starting_range))
+    ka_near == 0 && throw(ArgumentError(
+        "the azimuth FM rate is zero at the near range ($(d.starting_range) m), so the carrier's " *
+        "reference time is undefined. The polynomial is most likely mis-parsed."))
+
+    return ImagePairGeometry.TOPSCarrier(;
+        azimuth_fm_rate = ka, doppler_centroid = fdc, ks,
+        eta_ref_near = near / ka_near,
+        starting_range = d.starting_range,
+        range_pixel_spacing = d.range_pixel_spacing,
+        azimuth_time_interval = d.azimuth_time_interval,
+        # The reference indexes lines from zero and takes `n_lines // 2`; one-based, the centre is one past
+        # that. An off-by-one here breaks the ramp's symmetry about the burst centre rather than its
+        # magnitude, so it would survive a magnitude check.
+        center_line = d.lines_per_burst ÷ 2 + 1)
+end
+
+"""
     ResampledSLC(secondary::SLCDatasets.SLC, offset; amplitude_only = false, kwargs...)
 
 The secondary acquisition's samples on the reference's grid, read from the product.
@@ -133,34 +178,67 @@ Takes the acquisition where the core takes a matrix, so a caller does not reach 
 samples and the mode travel together. `offset` and `kwargs` are as
 [`ResampledSLC`](@ref) documents them.
 
-# TOPS is refused here
+# TOPS deramping
 
 Sentinel-1 IW steers the antenna in azimuth across each burst, putting a steep ramp on the azimuth phase.
-Interpolating those samples without removing the ramp first aliases it, worst at the burst edges, and the
-result is a phase-corrupted image that looks entirely valid. `SLCDatasets` does not yet parse the three
-annotation fields a deramp needs — see its `deramp_parameters` — so this refuses rather than producing
-one.
+Interpolating those samples without removing the ramp aliases it, worst at the burst edges, and the result
+is a phase-corrupted image that looks entirely valid. So for a TOPS acquisition this builds the carrier from
+the product's annotation and hands it to the core, which removes it before interpolating and reapplies it
+after.
 
-`amplitude_only = true` permits it, because taking the magnitude discards the phase and so is insensitive
-to the ramp. That is a real use: amplitude feature tracking on Sentinel-1 is what most of this pipeline
-does. It is a keyword rather than the default so that the choice is written at the call site, where a
-reader can see which kind of result they are holding.
+A single burst has one carrier. A **merged subswath has one per burst** — the ramp is referenced to each
+burst's own centre — and this package does not yet resample one: `burst_at` says which burst a line belongs
+to, but the carrier a chip needs depends on where its *samples* fall, and a chip straddling a burst seam has
+no single answer. So a merge is refused rather than deramped with the wrong reference. Resample the bursts
+individually.
 
-This is the only place the check can be made. A bare samples matrix carries no record of how it was
-collected, so the core's `ResampledSLC` cannot ask — it documents the hazard and this enforces it.
+A product whose annotation omits the fields the deramp needs is also refused, naming the missing one.
+
+`amplitude_only = true` skips the deramp, because taking the magnitude discards the phase and so is
+insensitive to the ramp. That is a real use — amplitude feature tracking on Sentinel-1 is what most of this
+pipeline does — and it stays a keyword rather than a default so the choice is written at the call site,
+where a reader can see which kind of result they are holding.
+
+This is the only place the carrier can be built. A bare samples matrix carries no record of how it was
+collected, so the core's `ResampledSLC` cannot ask; it documents the hazard and this supplies the answer.
 """
 function ImagePairGeometry.ResampledSLC(secondary::SLC, offset::AbstractMatrix;
-                                        amplitude_only::Bool = false, kwargs...)
-    if SLCDatasets.is_tops(secondary) && !amplitude_only
-        throw(ArgumentError(
-            "this is a TOPS acquisition, whose azimuth phase carries a per-burst ramp that must be " *
-            "removed before its complex samples are interpolated and reapplied afterwards. " *
-            "SLCDatasets does not yet parse the annotation fields that needs — call " *
-            "`SLCDatasets.deramp_parameters` to see which — so resampling the complex samples would " *
-            "produce a phase-corrupted image that looks valid. Pass `amplitude_only = true` if the " *
-            "magnitudes are all you will read, which is insensitive to the ramp."))
-    end
-    return ImagePairGeometry.ResampledSLC(pixels(secondary), offset; kwargs...)
+                                        amplitude_only::Bool = false, carrier = nothing, kwargs...)
+    # The carrier is settled before the samples are reached. Which phase to remove is a question about the
+    # geometry, and answering it first means a product whose annotation cannot support a deramp says so
+    # rather than failing later on its bytes — and that a caller reading a product with no samples at all
+    # still gets told about the deramp.
+    c = _tops_carrier(secondary, amplitude_only, carrier)
+    return ImagePairGeometry.ResampledSLC(pixels(secondary), offset; carrier = c, kwargs...)
+end
+
+# Which carrier a resample of this acquisition needs, or `nothing`.
+function _tops_carrier(secondary::SLC, amplitude_only::Bool, carrier)
+    # Not TOPS, or the phase will not be read: nothing to remove, and the result is what it was before any of
+    # this existed. An explicit carrier is the caller's own — how a merged subswath or an already-deramped
+    # product is handled, since those know something about the samples this cannot infer.
+    (!SLCDatasets.is_tops(secondary) || amplitude_only) && return carrier
+    carrier === nothing || return carrier
+
+    # A merge carries one ramp per burst, each referenced to its own centre. A chip near a seam reads samples
+    # from two bursts, so no single carrier describes it — and deramping the whole image with the first
+    # burst's would be wrong by up to half a burst everywhere else. Refused rather than guessed; the caller
+    # can resample each burst, or pass its own `carrier` if it knows better.
+    secondary.backend isa SLCDatasets.MergedBurstBackend && throw(ArgumentError(
+        "this is a merge of TOPS bursts, which carries one azimuth ramp per burst rather than one for " *
+        "the image: each is referenced to its own burst's centre, and a chip spanning a seam has no " *
+        "single answer. Resample the bursts individually, or pass `carrier` if you have one that covers " *
+        "the merged grid. `amplitude_only = true` needs no carrier at all."))
+
+    g = secondary.geometry
+    sv = SLCDatasets.orbit(secondary)
+    g.epoch == sv.epoch || throw(ArgumentError(
+        "the azimuth times are measured against $(g.epoch) but the state vectors against $(sv.epoch); " *
+        "building a TOPS carrier needs both on one epoch, since the platform speed is interpolated at " *
+        "the burst's mid-time"))
+
+    return ImagePairGeometry.TOPSCarrier(SLCDatasets.deramp_parameters(secondary), Orbit(sv);
+                                        epoch = g.epoch)
 end
 
 end
