@@ -134,6 +134,30 @@ end
     end
 end
 
+@testset "the carrier is evaluated in the secondary's own indices" begin
+    # The output is on the *reference's* grid but the ramp belongs to the *secondary's* samples, so the phase
+    # must be evaluated at `output + offset`, not at the output index. Getting this backwards is the failure
+    # the whole design has to avoid: it leaves a residual phase equal to the ramp's change over the offset,
+    # which on a real pair is tens of samples of range.
+    #
+    # Constructed so the two readings differ by a large, known amount: a carrier linear in the line, with an
+    # offset of exactly one line. Then the wrong reading is off by one full slope.
+    n = 48
+    slope = 0.7
+    lin(line, samp) = slope * line
+    base = ComplexF32[ComplexF32(cis(lin(i, j))) for i in 1:n, j in 1:n]
+
+    # A whole-line offset, so the interpolation is at an integer position and the only thing that can change
+    # the answer is which index the carrier was evaluated at.
+    r = ResampledSLC(base, fill((0.0, 1.0), n, n); carrier = lin)
+    for i in (SINC_HALF + 3, n ÷ 2), j in (SINC_HALF + 3, n ÷ 2)
+        # The sample one line down, unchanged: its own carrier was removed and reapplied.
+        @test r[i, j] ≈ base[i + 1, j] rtol = 1e-4
+        # And *not* the value the reference-grid reading would give, which is a full slope away in phase.
+        @test !isapprox(r[i, j], base[i + 1, j] * ComplexF32(cis(slope)); rtol = 1e-3)
+    end
+end
+
 @testset "removing the carrier is what stops the ramp aliasing" begin
     # The claim the feature makes: interpolating ramped samples *without* removing the phase is wrong, and
     # removing it recovers the truth. Both are measured against an analytic ground truth — a smooth signal

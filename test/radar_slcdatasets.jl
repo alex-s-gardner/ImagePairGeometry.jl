@@ -338,13 +338,11 @@ end
     end
 end
 
-@testset "TOPS is refused on the complex resampling path" begin
+@testset "a stripmap acquisition needs no carrier" begin
     # `ResampledSLC` interpolates complex samples, and a TOPS acquisition's azimuth phase carries a
     # per-burst ramp that has to be removed first. The core cannot know: it takes a bare matrix. Here the
-    # acquisition is in hand, so the check is possible and is made.
-    #
-    # Asserted on the message rather than the type, since the point is that a caller is told *why* and
-    # what to do about it.
+    # acquisition is in hand, so the carrier is built from its annotation — and for a non-TOPS product there
+    # is none to build, which is what this asserts.
     off = fill((0.0, 0.0), 4, 4)
 
     mktempdir() do dir
@@ -372,49 +370,98 @@ let writer = joinpath(SLCD_TEST, "sentinel1_fixture.jl"),
         @info "skipping the Sentinel-1 TOPS refusal; this SLCDatasets has no committed S1 fixture"
     else
         isdefined(@__MODULE__, :write_s1_fixture) || include(writer)
-        @testset "TOPS is refused on Sentinel-1 data" begin
+        @testset "the TOPS carrier is built from the product" begin
             off = fill((0.0, 0.0), 4, 4)
             mktempdir() do dir
-                safe, eof = write_s1_fixture(mkpath(joinpath(dir, "tops")),
-                                             JSON3.read(read(inputs, String)))
-                b = bursts(safe; orbit = eof, swath = 2)
-                @test SLCDatasets.is_tops(b[1])
-
-                # A single burst is refused, and the message carries the way forward rather than only the
-                # refusal: what is missing, where to look for it, and what remains safe.
+                # Read as a plain `Dict` rather than a JSON3 object, since the deramp fields are added below
+                # and a JSON3 object is immutable.
+                raw = JSON3.read(read(inputs, String), Dict{String,Any})
+                # The committed inputs carry none of the three deramp fields, so this is the case a product
+                # processed before they were dumped presents: refused, naming the missing field, rather than
+                # deramped with a guess.
+                bare, bare_eof = write_s1_fixture(mkpath(joinpath(dir, "bare")), raw)
+                b0 = bursts(bare; orbit = bare_eof, swath = 2)
+                @test SLCDatasets.is_tops(b0[1])
                 err = try
-                    ResampledSLC(b[1], off)
+                    ResampledSLC(b0[1], off)
                     nothing
                 catch e
                     sprint(showerror, e)
                 end
                 @test err !== nothing
-                @test occursin("TOPS acquisition", err)
-                @test occursin("deramp_parameters", err)
-                @test occursin("amplitude_only", err)
+                @test occursin("azimuthFmRateList", err)
 
-                # A merge is refused too, so the check follows the acquisition rather than the container —
-                # and `MergedBurstBackend` is the one form that does not inherit the answer from the burst
-                # type, so it is the one most likely to slip through.
+                # The amplitude path is permitted whatever the annotation carries, because taking the
+                # magnitude discards the phase. Not a loophole: amplitude feature tracking on Sentinel-1 is
+                # what most of this pipeline does.
+                #
+                # The fixture carries annotation and no `measurement` directory, so reaching the samples
+                # fails there for an unrelated reason. That failure is itself the assertion — it comes from
+                # SLCDatasets' sample reader rather than from the deramp, which is what says the keyword got
+                # past it.
+                amp_err = try
+                    ResampledSLC(b0[1], off; amplitude_only = true)
+                    nothing
+                catch e
+                    sprint(showerror, e)
+                end
+                @test amp_err === nothing || !occursin("azimuthFmRateList", amp_err)
+                @test amp_err === nothing || occursin("measurement", amp_err)
+
+                # And with the fields present, a carrier is built rather than the resample refused. Written
+                # into the fixture the same way SLCDatasets' own TOPS test does.
+                full = deepcopy(raw)
+                for swath in ("1", "2", "3")
+                    sw = full["swaths"][swath]
+                    times = sw["burstAzimuthTimes"]
+                    sw["azimuthSteeringRate"] = "1.590368784"
+                    sw["azimuthFmRateList"] = [Dict("azimuthTime" => t, "t0" => "0.005",
+                                                    "coefficients" => ["-2300.0", "0.5", "-1.0e-5"])
+                                               for t in times]
+                    sw["dcEstimateList"] = [Dict("azimuthTime" => t, "t0" => "0.005",
+                                                 "coefficients" => ["-40.0", "0.25", "-2.0e-6"])
+                                            for t in times]
+                end
+                safe, eof = write_s1_fixture(mkpath(joinpath(dir, "tops")), full)
+                b = bursts(safe; orbit = eof, swath = 2)
+
+                d = SLCDatasets.deramp_parameters(b[1])
+                c = ImagePairGeometry.TOPSCarrier(d, ImagePairGeometry.Orbit(SLCDatasets.orbit(b[1]));
+                                                 epoch = b[1].geometry.epoch)
+                @test c isa ImagePairGeometry.TOPSCarrier
+                # The sweep term is `2|v|·rate/λ`, with `|v|` interpolated at the burst mid — so it lands
+                # near the platform speed's own scale for a 1.59 deg/s sweep and a 5.5 cm wavelength.
+                @test 5.0e3 < c.ks < 1.0e4
+                # Zero at the burst centre, by construction, and steep at its edges.
+                center = Int(d.lines_per_burst ÷ 2 + 1)
+                @test c(center, 1) == 0.0
+                @test abs(c(1, 1)) > 1.0e3
+
+                # Reaching the samples still fails on the fixture's missing `measurement`, so what this
+                # asserts is that the failure is no longer the deramp's.
+                built_err = try
+                    ResampledSLC(b[1], off)
+                    nothing
+                catch e
+                    sprint(showerror, e)
+                end
+                @test built_err === nothing || !occursin("azimuthFmRateList", built_err)
+                @test built_err === nothing || occursin("measurement", built_err)
+
+                # A merge carries one ramp per burst, each about its own centre, so a chip near a seam has no
+                # single carrier. Refused rather than deramped with the first burst's reference — which would
+                # be wrong by up to half a burst everywhere else and look entirely plausible.
                 m = merge_bursts(b[1:2])
                 @test SLCDatasets.is_tops(m)
-                @test_throws "TOPS acquisition" ResampledSLC(m, off)
-
-                # The amplitude path is permitted, because taking the magnitude discards the phase. Not a
-                # loophole: amplitude feature tracking on Sentinel-1 is what most of this pipeline does.
-                #
-                # The committed fixture carries annotation and no `measurement` directory, so reaching the
-                # samples fails there for an unrelated reason. That failure is itself the assertion: it
-                # comes from SLCDatasets' sample reader rather than from the TOPS check, which is what says
-                # the keyword let it through.
-                amp_err = try
+                @test_throws "one azimuth ramp per burst" ResampledSLC(m, off)
+                # Unless the caller supplies one, or asks only for magnitudes.
+                merged_amp = try
                     ResampledSLC(m, off; amplitude_only = true)
                     nothing
                 catch e
                     sprint(showerror, e)
                 end
-                @test amp_err === nothing || !occursin("TOPS acquisition", amp_err)
-                @test amp_err === nothing || occursin("measurement", amp_err)
+                @test merged_amp === nothing || occursin("measurement", merged_amp)
             end
         end
     end
