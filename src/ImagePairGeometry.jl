@@ -48,6 +48,9 @@ export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
 # because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
 export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
+# Terrain height for `rdr2geo`. A bare number is still accepted everywhere; these are for a caller
+# supplying a varying source, and `height_at` is what such a source implements.
+export AbstractHeightSource, ConstantHeight, height_at
 # Opt-in, and not bitwise: `chebyshev_orbit` trades the interpolant's position agreement for about
 # 1.17x of a radar point. See its docstring and `REFERENCE.md`.
 export chebyshev_orbit
@@ -82,6 +85,9 @@ include("kernel/rounding.jl")
 include("radar/ellipsoid.jl")
 include("radar/orbit.jl")
 include("radar/geo2rdr.jl")
+# Before `radar/rdr2geo.jl`: the solve snaps each candidate to a height source, so `height_at` and
+# `reference_height` must exist.
+include("radar/height.jl")
 include("radar/rdr2geo.jl")
 include("coordinates.jl")
 include("transforms.jl")

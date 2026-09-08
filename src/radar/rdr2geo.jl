@@ -74,10 +74,15 @@ below and agree.
 Ground point `(lon, lat, height)` in radians and meters, imaged at azimuth time `aztime` and slant
 `range`.
 
-`height` is the terrain height above the ellipsoid, constant — which is all the reference's callers
-supply, via `DEMInterpolator(zz)` at a scalar `zz` (`GeogridRadar.py:176`, `:289`). A raster-backed
-DEM would interpolate per candidate location; the fixed-point structure is unchanged by that, but
-nothing in this package needs it.
+`height` is the terrain height above the ellipsoid, as a number or an [`AbstractHeightSource`](@ref). A
+number is constant everywhere, which is all the reference's callers supply — via `DEMInterpolator(zz)` at
+a scalar `zz` (`GeogridRadar.py:176`, `:289`) — and is what the footprint and incidence-angle paths pass;
+that case is bitwise what it was before sources existed.
+
+A varying source is sampled at each candidate location, which is what inverting a *reference pixel* to a
+ground point over real terrain requires. The fixed-point structure is unchanged, but what convergence
+means is not: see [`AbstractHeightSource`](@ref), and read [`rdr2geo_converged`](@ref)'s flag rather than
+assuming it.
 
 Ported from `Rdr2Geo.icc:44-168`. Returns the converged location; a failure to converge within
 `maxiter + extraiter` is *not* an error, matching isce3 — its NaN-on-failure branch is commented out
@@ -85,13 +90,37 @@ in the source with a note that enabling it breaks tests (`Rdr2Geo.icc:153-162`),
 depends on that leniency. Use [`rdr2geo_converged`](@ref) when the distinction matters.
 """
 function rdr2geo(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Real;
-                 height::Real, doppler::Real = 0.0, wavelength::Real,
+                 height, doppler::Real = 0.0, wavelength::Real,
                  side::LookSide, threshold::Real = RDR2GEO_THRESHOLD,
                  maxiter::Integer = RDR2GEO_MAXITER,
                  extraiter::Integer = RDR2GEO_EXTRAITER)
     llh, _ = rdr2geo_converged(orbit, el, aztime, range; height, doppler, wavelength, side,
                                threshold, maxiter, extraiter)
     return llh
+end
+
+# Whether `update_llh` has a real solution for a target at geocentric distance `b`, imaged at slant range
+# `r` from a satellite at geocentric distance `a` — that is, whether both of its square roots have
+# non-negative arguments.
+#
+# Two ways the geometry can fail to close, and a varying height source reaches both. The law of cosines
+# gives `cos_theta` for the triangle centre-satellite-target, and `|cos_theta| > 1` means no such triangle
+# exists: the range sphere and the height sphere do not intersect. Past that, `beta` takes the root of
+# `(r sin_theta)^2 - alpha^2`, which goes negative when the zero-Doppler plane misses the intersection
+# circle — the target is on the sphere but not at a point this geometry images.
+#
+# Tested before `update_llh` rather than inside it, so the arithmetic there stays exactly the reference's
+# and the constant-height path is untouched. Duplicating three lines is the price of that, and it is worth
+# paying: those three lines are asserted bitwise against isce3 in `test/radar_numerics.jl`.
+@inline function _reachable(a::Float64, r::Float64, b::Float64, ndotv::Float64, vdott::Float64,
+                            dopfact::Float64)
+    cos_theta = 0.5 * (a / r + r / a - (b / a) * (b / r))
+    abs(cos_theta) <= 1.0 || return false
+    sin_theta = sqrt(1.0 - cos_theta * cos_theta)
+    gamma = r * cos_theta
+    alpha = (dopfact - gamma * ndotv) / vdott
+    x = r * sin_theta
+    return (x * x - alpha * alpha) >= 0.0
 end
 
 """
@@ -104,7 +133,7 @@ in that case — see [`rdr2geo`](@ref) — so this is for a caller that wants to
 wants a different result.
 """
 function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Real;
-                           height::Real, doppler::Real = 0.0, wavelength::Real,
+                           height, doppler::Real = 0.0, wavelength::Real,
                            side::LookSide, threshold::Real = RDR2GEO_THRESHOLD,
                            maxiter::Integer = RDR2GEO_MAXITER,
                            extraiter::Integer = RDR2GEO_EXTRAITER)
@@ -146,7 +175,7 @@ function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Rea
     end
 
     converged = false
-    h = Float64(height)
+    h = reference_height(height)
     llh_old = SVector{3,Float64}(0.0, 0.0, 0.0)
     llh_new = llh_old
 
@@ -154,11 +183,21 @@ function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Rea
         # Near-nadir: no look angle on the range sphere reaches a target this far below the
         # satellite, so the geometry has no solution and iterating further cannot find one.
         sat_height - h >= r && break
+        # The complementary failure, reachable only from a *varying* height source: a candidate so far
+        # above the local sphere that no look angle on the range sphere reaches it either, which puts
+        # `|cos_theta| > 1` and takes `sqrt` of a negative in `update_llh`. A constant source cannot get
+        # here — `h` barely moves — so this guard costs the reference's path nothing and is not a
+        # divergence from it: isce3 would fault on the same input, and faulting is not a behavior with a
+        # value to reproduce. Leaves `converged` false and the last good estimate standing, which is what
+        # a caller reading the flag expects.
+        _reachable(a, r, radius + h, ndotv, vdott, dopfact) || break
 
         llh_new = update_llh(h)
-        # Snap to the terrain. A raster DEM would be sampled at `llh_new`'s lon/lat here; a constant
-        # height ignores the location, which is what makes this converge in a handful of steps.
-        llh_new = SVector{3,Float64}(llh_new[1], llh_new[2], Float64(height))
+        # Snap to the terrain, sampled at this candidate's own location. A constant source ignores the
+        # location and returns its value — which is what makes that case converge in a handful of steps,
+        # and what makes it bitwise identical to the scalar `height` this took before sources existed.
+        llh_new = SVector{3,Float64}(llh_new[1], llh_new[2],
+                                     height_at(height, llh_new[1], llh_new[2]))
 
         xyz_new = lonlat_to_xyz(el, llh_new)
         h = norm3(xyz_new) - radius
@@ -182,5 +221,10 @@ function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Rea
 
     # One final evaluation, so the result sits exactly on the range sphere rather than at the last
     # DEM-snapped estimate (`Rdr2Geo.icc:164`).
+    #
+    # Guarded for the same reason the loop is: the height the loop exited with need not be one this
+    # geometry can image, and a varying source can leave it that way. Falling back to the last snapped
+    # estimate keeps the return finite and `converged` false, which is the contract a caller reads.
+    _reachable(a, r, radius + h, ndotv, vdott, dopfact) || return (llh_new, false)
     return (update_llh(h), converged)
 end

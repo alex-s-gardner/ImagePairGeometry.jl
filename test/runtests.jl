@@ -20,6 +20,7 @@ include("npz.jl")
     @time @testset "window" begin include("window.jl") end
     @time @testset "kernel" begin include("kernel.jl") end
     @time @testset "velocity conversion" begin include("velocity.jl") end
+    @time @testset "height sources" begin include("height.jl") end
     @time @testset "radar numerics vs isce3" begin include("radar_numerics.jl") end
     @time @testset "radar coordinate vs reference" begin include("radar_coordinate.jl") end
     @time @testset "radar per-point kernel" begin include("radar_geometry.jl") end
