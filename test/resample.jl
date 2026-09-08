@@ -11,9 +11,29 @@
 
 using ImagePairGeometry
 using ImagePairGeometry: SincKernel, sinc_interpolate, kernel_length, decimation,
-                         SINC_LEN, SINC_HALF, SINC_ONE, SINC_SUB
+                         SINC_LEN, SINC_HALF, SINC_ONE, SINC_SUB, ResampledSLC,
+                         RadarCoordinate, Orbit, LookRight, incidence_angle
 using JSON3
+using Random
+using StaticArrays: SVector
 using Test
+
+# A reference coordinate for the Doppler cases: only its range and azimuth scales are read, to turn an
+# output pixel into an azimuth time and a slant range.
+function _resamp_coord()
+    ts = collect(0.0:10.0:400.0)
+    R, incl = 7.0e6, deg2rad(98.0)
+    om = sqrt(3.986004418e14 / R^3)
+    orb = Orbit(; time = ts,
+                position = [SVector(R*cos(om*t), R*sin(om*t)*cos(incl), R*sin(om*t)*sin(incl))
+                            for t in ts],
+                velocity = [SVector(-R*om*sin(om*t), R*om*cos(om*t)*cos(incl),
+                                    R*om*cos(om*t)*sin(incl)) for t in ts])
+    kw = (; orbit = orb, starting_range = 8.0e5, dr = 2.3295621147, sensing_start = 100.0,
+          prf = 486.4863103, nsamples = 500, nlines = 400, look_side = LookRight,
+          wavelength = 0.05546576)
+    return RadarCoordinate(; kw..., incidence_angle = incidence_angle(; kw...))
+end
 
 const SINC_FX = JSON3.read(read(joinpath(@__DIR__, "reference", "sinc.json"), String))
 
@@ -193,4 +213,159 @@ end
     small = SincKernel(kernel_length = 4, decimation = 16)
     @test size(small.weights) == (16, 4)
     @test kernel_length(small) == 4 && decimation(small) == 16
+end
+
+const RESAMP_FX = JSON3.read(read(joinpath(@__DIR__, "reference", "resamp.json"), String))
+
+_unhex(rows) = reduce(vcat, [permutedims([parse(Float64, String(v)) for v in row]) for row in rows])
+
+@testset "the resampled image is bitwise against isce3" begin
+    # `ResampledSLC` presents the secondary's samples on the reference's grid; isce3's
+    # `resample_to_coords` does the same given index grids, and it is the routine the NISAR workflow
+    # calls. So this is the whole of Path A checked end to end against the reference, not just the kernel.
+    @test RESAMP_FX.versions.isce3 == "0.25.12"
+
+    S = ComplexF32.(_unhex(RESAMP_FX.block_real) .+ 1im .* _unhex(RESAMP_FX.block_imag))
+    rg, az = _unhex(RESAMP_FX.rg_off), _unhex(RESAMP_FX.az_off)
+    want = ComplexF32.(_unhex(RESAMP_FX.isce3_real) .+ 1im .* _unhex(RESAMP_FX.isce3_imag))
+    baz, brg = Int(RESAMP_FX.base[1]), Int(RESAMP_FX.base[2])
+
+    # The fixture's offsets are relative to an output window placed at `base` on the reference grid;
+    # `ResampledSLC` is indexed by output pixel from one, so the placement enters as a constant.
+    off = [(rg[i, j] + brg, az[i, j] + baz) for i in axes(rg, 1), j in axes(rg, 2)]
+    r = ResampledSLC(S, off)
+    @test size(r) == size(want)
+
+    nexact, nfinite, worst = 0, 0, 0.0
+    for i in axes(want, 1), j in axes(want, 2)
+        got, w = r[i, j], want[i, j]
+        if isnan(real(w))
+            # The planted hole: an unplaceable point is the fill, not an interpolation somewhere
+            # arbitrary. Asserted rather than skipped, since returning a *number* here would be the
+            # dangerous outcome.
+            @test isnan(real(got)) && isnan(imag(got))
+            nexact += 1
+            continue
+        end
+        nfinite += 1
+        exact = reinterpret(UInt32, real(got)) == reinterpret(UInt32, real(w)) &&
+                reinterpret(UInt32, imag(got)) == reinterpret(UInt32, imag(w))
+        @test exact
+        exact && (nexact += 1)
+        worst = max(worst, Float64(abs(got - w)))
+    end
+    # The fixture must actually contain a hole and a majority of solved points, or the loop above is
+    # asserting less than it appears to.
+    @test nfinite == 143
+    @test nexact == length(want)
+    @info "resampled block vs isce3" finite = nfinite bitwise = nexact worst = worst
+end
+
+@testset "the resampled image is lazy and window-shaped" begin
+    Random.seed!(11)
+    n = 64
+    S = ComplexF32.(randn(n, n) .+ 1im .* randn(n, n))
+
+    # Shaped like the offset field, which is shaped like the reference image — so it lines up with a
+    # `PairGeometry` over the same window and can be read a block at a time.
+    r = ResampledSLC(S, fill((3.0, -2.0), n, n))
+    @test size(r) == (n, n)
+    @test r isa AbstractMatrix{ComplexF32}
+
+    # An integer offset is a pure shift, so the result must be the sample itself — bitwise, since the
+    # kernel's taps sum to one at the zero sub-pixel position and no interpolation is happening.
+    @test r[20, 30] === S[20 - 2, 30 + 3]
+    # And a zero offset is the identity.
+    @test ResampledSLC(S, fill((0.0, 0.0), n, n))[20, 30] === S[20, 30]
+
+    # A window reads that window. The values match element for element, which is what says the halo and
+    # the index arithmetic agree between a windowed read and a scalar one.
+    w = r[10:14, 20:26]
+    @test size(w) == (5, 7)
+    @test all(w[a, b] === r[9 + a, 19 + b] for a in 1:5, b in 1:7)
+
+    # A fractional offset is the kernel applied at that position, and nothing more: at zero Doppler both
+    # of `resampleToCoords`'s phasors are exactly unity, so the result must equal a direct
+    # `sinc_interpolate`. An identity that were only *nearly* one would drift invisibly.
+    k = SincKernel()
+    rf = ResampledSLC(S, fill((0.25, 0.5), n, n); kernel = k)
+    @test rf[20, 30] === sinc_interpolate(k, S, 30 + 0.25, 20 + 0.5)
+
+    # The fill, not zero, where the stencil cannot fit. Zero is a sample value and would be
+    # indistinguishable from a real one, which is why the bound is tested here rather than left to
+    # `sinc_interpolate`'s own edge return.
+    for (i, j) in ((1, 1), (1, 30), (30, 1), (n, 30), (30, n), (n, n))
+        @test isnan(real(r[i, j]))
+    end
+    # A `NaN` offset is a point the geometry could not place, and yields the fill too.
+    @test isnan(real(ResampledSLC(S, fill((NaN, 0.0), n, n))[20, 30]))
+    @test isnan(real(ResampledSLC(S, fill((0.0, NaN), n, n))[20, 30]))
+    # The fill is settable, for a caller who wants a sentinel their reader understands.
+    @test ResampledSLC(S, fill((NaN, 0.0), n, n); fill = 0.0f0 + 0.0f0im)[20, 30] === 0.0f0 + 0.0f0im
+end
+
+@testset "the amplitude of a resampled image" begin
+    # The composition Path A exists for: `abs` of the resampled samples is what a feature tracker reads,
+    # and it must be the amplitude *of the interpolated complex value* rather than an interpolation of
+    # amplitudes — those differ, and only the first is right for coherent data.
+    Random.seed!(5)
+    n = 48
+    S = ComplexF32.(randn(n, n) .+ 1im .* randn(n, n))
+    r = ResampledSLC(S, fill((1.5, -0.5), n, n))
+    @test abs(r[20, 20]) ≈ abs(sinc_interpolate(SincKernel(), S, 20 + 1.5, 20 - 0.5))
+    # An integer offset makes the two agree exactly, which is the case a caller can check by hand.
+    ri = ResampledSLC(S, fill((2.0, -1.0), n, n))
+    @test abs(ri[20, 20]) === abs(S[19, 22])
+end
+
+@testset "a doppler model needs a coordinate" begin
+    # The model is a function of azimuth time and slant range; only the reference's coordinate turns an
+    # output pixel into those. Refusing here rather than at the first indexed element, since the mistake
+    # is in the construction.
+    S = ComplexF32.(randn(8, 8) .+ 1im .* randn(8, 8))
+    off = fill((0.0, 0.0), 8, 8)
+    @test_throws "needs the reference acquisition" ResampledSLC(S, off; doppler = (az, rg) -> 0.0)
+    # Zero Doppler is the default and needs nothing.
+    @test ResampledSLC(S, off) isa ResampledSLC
+
+    # A model that returns zero everywhere must give the same answer as no model at all: that is what
+    # says the Doppler arithmetic collapses to an identity rather than merely to something small.
+    Random.seed!(3)
+    n = 48
+    big = ComplexF32.(randn(n, n) .+ 1im .* randn(n, n))
+    coord = _resamp_coord()
+    plain = ResampledSLC(big, fill((1.25, -0.75), n, n))
+    zeroed = ResampledSLC(big, fill((1.25, -0.75), n, n); doppler = (az, rg) -> 0.0,
+                          coordinate = coord)
+    @test plain[20, 20] === zeroed[20, 20]
+
+    # A nonzero model changes the result, and it changes the *magnitude* as well as the phase. That is the
+    # physics rather than a defect: derotating the chip by the Doppler phase before interpolating makes the
+    # signal smoother in azimuth, so the interpolant of the derotated chip is genuinely a different number
+    # — which is the whole reason the derotation is there. Reapplying the phase afterwards restores the
+    # carrier at the fractional position, not the pre-interpolation magnitude.
+    #
+    # Measured against the per-sample phase `f * 2pi / prf`, which is what governs the size of the effect:
+    #
+    #     0.01 Hz   1.3e-4 rad/sample   magnitude moves 6e-5
+    #     1 Hz      1.3e-2 rad/sample   magnitude moves 5e-3
+    #     40 Hz     5.2e-1 rad/sample   magnitude moves 0.25
+    #
+    # So a small Doppler is a small correction and a large one is not, and the transition is smooth. An
+    # assertion that the magnitude were *unchanged* would only hold at zero.
+    for (f, tol) in ((1.0e-6, 1e-6), (0.01, 1e-3), (1.0, 5e-2))
+        d = ResampledSLC(big, fill((1.25, -0.75), n, n); doppler = (az, rg) -> f, coordinate = coord)
+        @test abs(d[20, 20]) ≈ abs(plain[20, 20]) rtol = tol
+    end
+    # A Doppler small enough to be negligible is indistinguishable from none, which is what makes the
+    # zero-Doppler path the right default rather than an approximation.
+    tiny = ResampledSLC(big, fill((1.25, -0.75), n, n); doppler = (az, rg) -> 1.0e-9,
+                        coordinate = coord)
+    @test tiny[20, 20] ≈ plain[20, 20] rtol = 1e-6
+
+    # And a large one is a real difference, not noise — so the term is doing something and is not
+    # accidentally optimized away.
+    big_dop = ResampledSLC(big, fill((1.25, -0.75), n, n); doppler = (az, rg) -> 40.0,
+                           coordinate = coord)
+    @test abs(abs(big_dop[20, 20]) - abs(plain[20, 20])) > 0.1
 end

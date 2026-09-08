@@ -46,6 +46,9 @@ export OFFSET_FIT_MAX_ORDER, OFFSET_FIT_MIN_NODES_PER_TERM
 # The sinc kernel. `SINC_*` are exported because a caller sizing a chip or a halo needs the same numbers
 # the kernel was built with.
 export SincKernel, sinc_interpolate, SINC_LEN, SINC_HALF, SINC_ONE, SINC_SUB
+# The lazy resampled image. Takes plain matrices, so a reader supplies the samples and this package
+# supplies the geometry — the same boundary the rest of the radar path draws.
+export ResampledSLC
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here

@@ -185,3 +185,159 @@ function sinc_interpolate(k::SincKernel, chip::AbstractMatrix, x::Real, y::Real;
     end
     return oftype(z, acc)
 end
+
+"""
+    ResampledSLC(samples, offset; kernel = SincKernel(), fill = NaN32 + NaN32im,
+                 doppler = nothing, coordinate = nothing)
+
+The secondary acquisition's samples on the *reference* acquisition's grid, interpolated on indexing.
+
+An `AbstractMatrix{ComplexF32}` shaped like `offset`, so it lines up with the reference image and can be
+read a window at a time. Nothing is resampled until it is asked for: indexing a window reads that window
+from `samples`, grown by [`SINC_HALF`](@ref) plus whatever the offsets there demand, and interpolates.
+
+`samples` is the secondary's complex samples — anything `AbstractMatrix{<:Complex}`, so
+`SLCDatasets.pixels` serves directly. `offset` gives `(dsample, dline)` per *output* pixel, as
+[`OffsetField`](@ref) and [`LatticeOffsetField`](@ref) produce, and is indexed the same way this is.
+
+# Why this is worth being lazy about
+
+A resampled Sentinel-1 subswath is 33 million complex samples, and a correlator reads a few hundred
+thousand of them. So `amplitude(ResampledSLC(...))` — or a window taken directly — reads the chips a
+consumer asks for and no more, which is the same shape `SLCDatasets.Amplitude` already has and composes
+with it.
+
+# Doppler
+
+Follows `resampleToCoords` (`cxx/isce3/image/v2/Resample.cpp`): the chip is read with the azimuth Doppler
+phase *removed* row by row, interpolated, and the phase for the fractional azimuth position reapplied. For
+a zero-Doppler grid — NISAR, and every acquisition this package handles today — the Doppler is zero, both
+phasors are unity, and the arithmetic reduces to the interpolation alone. That is why this is usable before
+any Doppler model exists.
+
+`doppler` supplies a nonzero one as a callable `doppler(aztime, range) -> Hz`, in which case `coordinate`
+is required: converting an output pixel to an azimuth time and a slant range needs the reference's
+[`RadarCoordinate`](@ref). Both default to `nothing`, which is the zero-Doppler case.
+
+!!! warning "Not for TOPS data"
+    Sentinel-1 IW sweeps the antenna in azimuth within each burst, so the azimuth phase carries a steep
+    ramp that must be removed before interpolation and reapplied after. This does not do that, and
+    interpolating a TOPS burst without it aliases the ramp — worst at the burst edges. The amplitudes are
+    unaffected, since `abs` discards the phase.
+
+    A pair built from a product knows whether it is TOPS; a bare `samples` matrix does not, so this type
+    cannot check it. See the `SLCDatasets` extension, which refuses the complex path for a TOPS
+    acquisition and permits the amplitude one.
+"""
+struct ResampledSLC{S<:AbstractMatrix,O<:AbstractMatrix,K,D,C} <: AbstractMatrix{ComplexF32}
+    samples::S
+    offset::O
+    kernel::K
+    fill::ComplexF32
+    doppler::D
+    coordinate::C
+
+    function ResampledSLC{S,O,K,D,C}(samples, offset, kernel, fill, doppler,
+                                     coordinate) where {S,O,K,D,C}
+        # A Doppler model without a coordinate cannot be evaluated: the model is a function of azimuth
+        # time and slant range, and only the coordinate converts a pixel to those.
+        (doppler === nothing || coordinate !== nothing) || throw(ArgumentError(
+            "ResampledSLC was given a doppler model but no coordinate; evaluating the model needs the " *
+            "reference acquisition's RadarCoordinate to turn an output pixel into an azimuth time and " *
+            "a slant range. Pass `coordinate`, or leave `doppler` unset for the zero-Doppler case."))
+        return new{S,O,K,D,C}(samples, offset, kernel, fill, doppler, coordinate)
+    end
+end
+
+function ResampledSLC(samples::AbstractMatrix, offset::AbstractMatrix;
+                      kernel = SincKernel(), fill = ComplexF32(NaN32, NaN32),
+                      doppler = nothing, coordinate = nothing)
+    return ResampledSLC{typeof(samples),typeof(offset),typeof(kernel),typeof(doppler),
+                        typeof(coordinate)}(
+        samples, offset, kernel, ComplexF32(fill), doppler, coordinate)
+end
+
+Base.size(r::ResampledSLC) = size(r.offset)
+Base.axes(r::ResampledSLC) = axes(r.offset)
+Base.IndexStyle(::Type{<:ResampledSLC}) = IndexCartesian()
+
+# The Doppler frequency at an output pixel, in radians per sample, as `Resample.cpp` computes it:
+# `lut.eval(az_time, rg_distance) * 2 * pi / prf`. Zero without a model, which collapses both phasors to
+# unity and is the only case the reference's own callers exercise on a zero-Doppler grid.
+@inline _doppler_rad(::Nothing, ::Any, ::Int, ::Int) = 0.0
+
+@inline function _doppler_rad(dop, c, samp::Int, line::Int)
+    # Zero-based, as the reference's indices are.
+    rg = c.starting_range + samp * c.dr
+    az = c.sensing_start + line / c.prf
+    return Float64(dop(az, rg)) * 2 * pi / c.prf
+end
+
+Base.@propagate_inbounds function Base.getindex(r::ResampledSLC, i::Int, j::Int)
+    @boundscheck checkbounds(r, i, j)
+
+    ds, dl = r.offset[i, j]
+    # A `NaN` offset is a point the geometry could not place, and it yields the fill rather than an
+    # interpolation at an arbitrary position — the reference's behavior, and the honest one.
+    (isnan(ds) || isnan(dl)) && return r.fill
+
+    # `offsets_to_indices`: the absolute input index is the output index plus the offset. This package's
+    # indices are one-based on both sides, so the relation carries over unchanged.
+    x = j + ds
+    y = i + dl
+
+    # The stencil has to fit. `sinc_interpolate` returns zero rather than throwing when it does not, and
+    # zero is a *sample value* — indistinguishable from a real one — so the bound is tested here and the
+    # fill returned instead.
+    kl = kernel_length(r.kernel)
+    half = kl ÷ 2
+    ix = floor(Int, x)
+    iy = floor(Int, y)
+    (ix < half || ix > size(r.samples, 2) - half) && return r.fill
+    (iy < half || iy > size(r.samples, 1) - half) && return r.fill
+
+    dop = _doppler_rad(r.doppler, r.coordinate, j - 1, i - 1)
+    return _resample_at(r.kernel, r.samples, x, y, dop, r.fill)
+end
+
+# One resampled sample: the chip read with the Doppler phase removed, interpolated, and the phase for the
+# fractional azimuth position put back.
+#
+# Transcribes `resampleToCoords`'s inner loop. At `dop == 0` both phasors are exactly `1 + 0im`, so the
+# multiplications are identities and the result is the plain interpolation — checked in `test/resample.jl`
+# against calling `sinc_interpolate` directly, since an identity that is only nearly one would show up as
+# a drift no correlator could attribute.
+function _resample_at(k::SincKernel, samples::AbstractMatrix, x::Float64, y::Float64,
+                      dop::Float64, fill::ComplexF32)
+    kl = kernel_length(k)
+    half = kl ÷ 2
+    chip_size = kl + 1
+    iy = floor(Int, y)
+    frac_az = y - iy
+
+    # `SINC_ONE` samples on a side, with the interpolated position inside it — the chip `resampleToCoords`
+    # reads. Built per sample: a `ComplexF32` 9x9 is 648 bytes and stack-allocated in practice, and
+    # threading a buffer through would make this type stateful for no measured gain.
+    chip = Matrix{ComplexF32}(undef, chip_size, chip_size)
+    ix = floor(Int, x)
+    for ci in 1:chip_size
+        # The chip's rows run from `half` below the integer position, and the Doppler phase is per row.
+        srow = iy + ci - half - 1
+        phase = dop * (ci - 1 - half)
+        conj_phasor = ComplexF32(cos(phase), -sin(phase))
+        for cj in 1:chip_size
+            scol = ix + cj - half - 1
+            (srow < 1 || srow > size(samples, 1) || scol < 1 || scol > size(samples, 2)) &&
+                return fill
+            chip[ci, cj] = ComplexF32(samples[srow, scol]) * conj_phasor
+        end
+    end
+
+    # The position within the chip: the fractional part offset by the half length, one-based.
+    frac_rg = x - ix
+    val = sinc_interpolate(k, chip, half + frac_rg + 1, half + frac_az + 1)
+
+    # And the phase corresponding to where in azimuth the sample was taken, reapplied.
+    phase = dop * frac_az
+    return val * ComplexF32(cos(phase), sin(phase))
+end

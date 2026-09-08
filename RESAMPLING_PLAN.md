@@ -982,7 +982,42 @@ and on evaluations at sub-pixel positions including the truncation boundaries. B
 here — the kernel is `cos` and `sin` of exactly representable arguments and a normalization — and
 should be asserted rather than bounded, per the exactness stance in `REFERENCE.md`.
 
-### CHUNK-009: the lazy resampled SLC
+### CHUNK-009: the lazy resampled SLC — done
+
+`ResampledSLC` in `src/resample.jl`: an `AbstractMatrix{ComplexF32}` over the reference's grid wrapping the
+secondary's samples and an offset field. **144 of 144 samples bitwise against
+`isce3.image.v2.resample_slc.resample_to_coords`**, worst difference exactly 0.0, over a 12×12 window whose
+offsets mix an integer shift, an exact half, a ramp, and a planted `NaN`.
+
+Targets `resampleToCoords` rather than the older `ResampSlc`, as planned — the v2 form is driven by index
+grids and carries no carrier polynomials or flattening. The index relation is isce3's: absolute input index
+is output index plus offset, which carries over unchanged because both sides here are one-based.
+
+Two departures worth recording.
+
+*The bounds test is here, not left to `sinc_interpolate`.* The kernel returns *zero* when its stencil does
+not fit, following isce3 — but zero is a sample value, indistinguishable from a real one. So the fit is
+tested before the call and the fill returned instead, which is what `resampleToCoords` does at the block
+level.
+
+*One assertion of mine was wrong about the physics, not the code.* I asserted that a nonzero Doppler
+changes the phase and leaves the magnitude alone. It does not: derotating the chip before interpolating
+makes the signal smoother in azimuth, so the interpolant is genuinely a different number — which is the
+entire reason the derotation exists. Measured against per-sample phase:
+
+| Doppler | rad/sample | magnitude moves |
+|---|---|---|
+| 0.01 Hz | 1.3e-4 | 6e-5 |
+| 1 Hz | 1.3e-2 | 5e-3 |
+| 40 Hz | 5.2e-1 | 0.25 |
+
+Smooth in between, and zero at zero. The test now asserts that scaling rather than an invariance that
+holds only at zero. A Doppler model requires a `coordinate`, since only that turns an output pixel into an
+azimuth time and a slant range, and it is refused at construction.
+
+Suite: 55937 → 56111.
+
+### CHUNK-009 as originally scoped
 
 `ResampledSLC <: AbstractMatrix{ComplexF32}` over image 1's grid, wrapping image 2's samples and a
 misregistration field. Indexing a window reads that window from image 2, offset by the field and
