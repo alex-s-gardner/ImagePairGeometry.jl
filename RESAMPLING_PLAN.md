@@ -1050,7 +1050,36 @@ check that catches a transposed axis or a sign-flipped offset, neither of which 
 would catch if the index grids were built the same wrong way on both sides. And `amplitude` of the
 result agrees with resampling the amplitudes only, which is what says the amplitude path is unharmed.
 
-### CHUNK-010: refuse TOPS on the complex path
+### CHUNK-010: refuse TOPS on the complex path — done
+
+Split across the two packages, and the split is the finding. The plan put the whole check in this
+package's `SLCDatasets` extension. **Half of it belongs in `SLCDatasets`**: whether an acquisition is
+TOPS is a fact about how the product was collected, which that package reads and this one cannot infer.
+
+`SLCDatasets` gains `is_tops` and `deramp_parameters`, following the `AbstractBurstBackend` pattern its
+own previous commit established — a backend answers a question about itself rather than callers naming
+formats. Every burst backend is TOPS by construction, since that abstract type already means "one burst
+of a TOPS acquisition", so both Sentinel-1 forms inherit it. `MergedBurstBackend` is the exception: it
+subtypes `AbstractSLCBackend` directly and would default to `false`, which is exactly the case that
+would reach a resampler unnoticed, so it has its own method and its own test.
+
+`deramp_parameters` throws naming the three annotation fields — `azimuthFmRateList`, `dcEstimateList`,
+`azimuthSteeringRate` — and noting they sit in the annotation already parsed for the geometry. So the
+gap is documented at the place a consumer will hit it rather than only in this plan.
+
+This package's extension gains `ResampledSLC(::SLC, offset; amplitude_only = false)`, which refuses a
+TOPS acquisition unless the keyword says the phase will not be read. A keyword rather than a default so
+the choice is written at the call site.
+
+One thing the committed Sentinel-1 fixture cannot exercise: it carries annotation and no `measurement`
+directory, so the amplitude path fails there when it reaches the samples. That failure is turned into
+the assertion — it comes from the sample reader rather than from the TOPS check, which is what says the
+keyword let it through.
+
+Suites: `SLCDatasets` 2866 → 2896, `ImagePairGeometry` unchanged at 56111 with 11 new extension
+assertions.
+
+### CHUNK-010 as originally scoped
 
 A TOPS acquisition reaching the complex resampler without deramping produces a phase-corrupted
 result that looks like a valid image. Throw instead, naming the three annotation fields that are

@@ -225,9 +225,10 @@ is required: converting an output pixel to an azimuth time and a slant range nee
     interpolating a TOPS burst without it aliases the ramp — worst at the burst edges. The amplitudes are
     unaffected, since `abs` discards the phase.
 
-    A pair built from a product knows whether it is TOPS; a bare `samples` matrix does not, so this type
-    cannot check it. See the `SLCDatasets` extension, which refuses the complex path for a TOPS
-    acquisition and permits the amplitude one.
+    A bare `samples` matrix carries no record of how it was collected, so this type cannot check it. Load
+    `SLCDatasets` and pass the acquisition instead of its samples: `SLCDatasets.is_tops` answers the
+    question, and the extension's `ResampledSLC(::SLC, offset)` refuses a TOPS acquisition unless
+    `amplitude_only = true` says the phase will not be read.
 """
 struct ResampledSLC{S<:AbstractMatrix,O<:AbstractMatrix,K,D,C} <: AbstractMatrix{ComplexF32}
     samples::S

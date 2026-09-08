@@ -337,3 +337,85 @@ end
         end
     end
 end
+
+@testset "TOPS is refused on the complex resampling path" begin
+    # `ResampledSLC` interpolates complex samples, and a TOPS acquisition's azimuth phase carries a
+    # per-burst ramp that has to be removed first. The core cannot know: it takes a bare matrix. Here the
+    # acquisition is in hand, so the check is possible and is made.
+    #
+    # Asserted on the message rather than the type, since the point is that a caller is told *why* and
+    # what to do about it.
+    off = fill((0.0, 0.0), 4, 4)
+
+    mktempdir() do dir
+        n = open_slc(write_fixture_product(joinpath(dir, "n.h5")))
+        # NISAR is stripmap, so the complex path is permitted and gets past the TOPS check. It then fails
+        # inside SLCDatasets for an unrelated reason — the fixture carries metadata and no image — which
+        # is itself the evidence that the TOPS check let it through.
+        @test !SLCDatasets.is_tops(n)
+        err = try
+            ResampledSLC(n, off)
+            nothing
+        catch e
+            sprint(showerror, e)
+        end
+        @test err === nothing || !occursin("TOPS acquisition", err)
+    end
+end
+
+# The Sentinel-1 half, from the same committed fixture the conversion testset above uses — so this needs
+# no granule either.
+let writer = joinpath(SLCD_TEST, "sentinel1_fixture.jl"),
+    inputs = joinpath(SLCD_TEST, "reference", "sentinel1_inputs.json")
+
+    if !isfile(writer) || !isfile(inputs)
+        @info "skipping the Sentinel-1 TOPS refusal; this SLCDatasets has no committed S1 fixture"
+    else
+        isdefined(@__MODULE__, :write_s1_fixture) || include(writer)
+        @testset "TOPS is refused on Sentinel-1 data" begin
+            off = fill((0.0, 0.0), 4, 4)
+            mktempdir() do dir
+                safe, eof = write_s1_fixture(mkpath(joinpath(dir, "tops")),
+                                             JSON3.read(read(inputs, String)))
+                b = bursts(safe; orbit = eof, swath = 2)
+                @test SLCDatasets.is_tops(b[1])
+
+                # A single burst is refused, and the message carries the way forward rather than only the
+                # refusal: what is missing, where to look for it, and what remains safe.
+                err = try
+                    ResampledSLC(b[1], off)
+                    nothing
+                catch e
+                    sprint(showerror, e)
+                end
+                @test err !== nothing
+                @test occursin("TOPS acquisition", err)
+                @test occursin("deramp_parameters", err)
+                @test occursin("amplitude_only", err)
+
+                # A merge is refused too, so the check follows the acquisition rather than the container —
+                # and `MergedBurstBackend` is the one form that does not inherit the answer from the burst
+                # type, so it is the one most likely to slip through.
+                m = merge_bursts(b[1:2])
+                @test SLCDatasets.is_tops(m)
+                @test_throws "TOPS acquisition" ResampledSLC(m, off)
+
+                # The amplitude path is permitted, because taking the magnitude discards the phase. Not a
+                # loophole: amplitude feature tracking on Sentinel-1 is what most of this pipeline does.
+                #
+                # The committed fixture carries annotation and no `measurement` directory, so reaching the
+                # samples fails there for an unrelated reason. That failure is itself the assertion: it
+                # comes from SLCDatasets' sample reader rather than from the TOPS check, which is what says
+                # the keyword let it through.
+                amp_err = try
+                    ResampledSLC(m, off; amplitude_only = true)
+                    nothing
+                catch e
+                    sprint(showerror, e)
+                end
+                @test amp_err === nothing || !occursin("TOPS acquisition", amp_err)
+                @test amp_err === nothing || occursin("measurement", amp_err)
+            end
+        end
+    end
+end
