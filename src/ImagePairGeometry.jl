@@ -26,7 +26,7 @@ converts its result to velocity.
 """
 module ImagePairGeometry
 
-using StaticArrays: SVector
+using StaticArrays: SVector, MMatrix
 using Extents: Extent
 import GeoFormatTypes as GFT
 import GeoInterface

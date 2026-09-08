@@ -1097,7 +1097,44 @@ today.
 Verify: a Sentinel-1 IW pair throws on the complex path with a message naming the missing fields;
 the same pair succeeds with the amplitude-only keyword; a NISAR pair succeeds without it.
 
-### CHUNK-011: documentation, benchmarks, REFERENCE.md
+### CHUNK-011: documentation, benchmarks, REFERENCE.md — done
+
+`docs/src/coregistration.md`, a `REFERENCE.md` section, `benchmark/coregister_perf.jl`, and the three
+overstatement corrections. Every number the page quotes comes from the benchmark rather than from an
+estimate, which is how the next finding surfaced.
+
+**The benchmark found a 31× performance bug in CHUNK-008's kernel.** `sinc_interpolate` took its
+accumulator type as a *value* — `accumulate::Type = eltype(chip)` — which left `zero(accumulate)` and
+`convert(accumulate, ...)` uninferable, so a fixed 64-tap sum boxed every partial: 7.2 µs and 336
+allocations. Moving it to a type parameter gives 82 ns and none, for identical values. `ResampledSLC` went
+from 7.2 µs to 188 ns per sample once its chip also became an `MMatrix`, and a whole S1 IW subswath from
+236 s to 6.4 s single-threaded. All 144 bitwise assertions still hold, so the change is value-preserving.
+
+That is the argument for benchmarking before documenting: the docstring would otherwise have shipped a
+throughput figure two orders of magnitude wrong, and nothing in the test suite would have noticed.
+
+**The docs build caught two more, both mine.** CHUNK-003 added `src/radar/height.jl` without adding it to
+`radar.md`'s autodocs `Pages`, so every `@ref` to `AbstractHeightSource` was unresolvable — invisible until
+a page referenced it. And `index.md` went over Documenter's 200 KiB error threshold, having already been
+past the 100 KiB warning: the Rasters extension's API now lives on its own `rasters.md` rather than the
+threshold being raised.
+
+Measured numbers now in the docs:
+
+| | |
+|---|---|
+| one `pixel_offset` | 2.0 µs |
+| S1 IW subswath, exact field | 66 s, 528 MB materialized |
+| 64×64 window exact / `lattice = 16` | 10.2 ms / 0.33 ms build + 1.3 ms read |
+| fit selection over 64×64×3 | 28 ms, once per pair |
+| one sinc interpolation | 82 ns |
+| one resampled sample | 188 ns, ~5 Msamples/s |
+| S1 IW subswath resampled | 6.4 s single-threaded |
+
+The three corrections: the README and `docs/src/index.md` now say the paths are complete *against
+geogrid* and what that excludes, and `src/pair.jl`'s header — which argues at length that the secondary
+matters, using `coregister` as its example — now notes that the argument covers the secondary's footprint
+and not its viewing geometry.
 
 `docs/src/coregistration.md` — named for the operation rather than for `resampling`, since resampling is
 one of two things the page covers and the smaller one. In the shape of `docs/src/radar.md`: what

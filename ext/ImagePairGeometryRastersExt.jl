@@ -546,7 +546,8 @@ end
 """
     RasterHeight(dem; missing_height = 0.0)
 
-Terrain height sampled from a raster, for [`rdr2geo`](@ref) to iterate against.
+Terrain height sampled from a raster, for `rdr2geo` to iterate against — see the
+[Radar geometry](radar.md) page.
 
 The raster is indexed in **degrees** and the solve asks in **radians**, so this converts; that is the
 whole reason a raster-backed source is a type rather than a closure a caller writes, since getting the

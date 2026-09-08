@@ -11,6 +11,12 @@
 # `max`/`min` over the two images, so the secondary moves the origin and resizes the grid. It
 # also yields each image's own pixel offset into the overlap, which a caller needs in order to
 # read the right pixels when correlating.
+#
+# That argument is right and, on the radar path, incomplete. It covers the secondary's *footprint* — where
+# the two images overlap — and not its viewing geometry, which is what decides where a given ground point
+# falls in each. Two radar acquisitions have different orbits, so a point sits at a different range sample
+# and azimuth line in each even over a perfectly known overlap. `secondary_offset_coordinate` carries the
+# geometry that answers it and `pixel_offset` computes the difference; see `src/misregistration.jl`.
 
 """
     ImageFootprint(; origin, spacing, size, crs = nothing)
