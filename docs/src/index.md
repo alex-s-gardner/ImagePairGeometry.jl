@@ -38,6 +38,10 @@ outputs divide by. See [Radar geometry](radar.md).
 `REFERENCE.md` records the exactness standard held on each path, including two radar float bands that
 agree to 1.07e-4 rather than bitwise, and the measurements that place the cause outside this package.
 
+Both paths are complete against geogrid, which assumes the two images already share a grid — true only
+because the reference pipeline resamples the secondary before geogrid runs. Measuring and removing that
+misregistration is [Coregistration](coregistration.md).
+
 ## Walkthrough
 
 Two images, a grid from a DEM, and the per-point geometry of the pair:
@@ -268,13 +272,9 @@ Pages = ["kernel/vecmath.jl", "kernel/rounding.jl", "coordinates.jl", "transform
 
 ## Raster IO
 
-Available when `Rasters`, `ArchGDAL`, `DimensionalData` and `DiskArrays` are loaded. Reads inputs a
-window at a time from disk-backed rasters, and writes the reference's nine GeoTIFFs.
-
-```@autodocs
-Modules = [Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)]
-Order = [:type, :function]
-```
+Reading inputs a window at a time from disk-backed rasters, and writing the reference's nine GeoTIFFs,
+are available when `Rasters`, `ArchGDAL`, `DimensionalData` and `DiskArrays` are loaded. See
+[Raster IO](rasters.md).
 
 ## Correlator handoff
 

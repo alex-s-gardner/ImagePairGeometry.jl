@@ -6,6 +6,7 @@
 
 using ImagePairGeometry
 using ImagePairGeometry: nsamples, nlines, xsize, ysize
+import GeoFormatTypes as GFT
 using JSON3
 using Test
 
@@ -112,10 +113,50 @@ end
     @test_throws UndefKeywordError RadarCoordinate()
 end
 
+@testset "two coordinate systems are refused" begin
+    # The check the reference makes by comparing EPSG codes, available here when both footprints carry
+    # one. Intersecting footprints is arithmetic in a single system, so an overlap computed across two is
+    # plausible numbers describing nowhere.
+    #
+    # This is not hypothetical: the two cross-path Landsat pairs in the ITS_LIVE golden set straddle UTM
+    # zones 7N and 8N, so a caller pairing adjacent paths hits it.
+    z7 = ImageFootprint(origin = (100.0, 900.0), spacing = (10.0, -10.0), size = (50, 50), crs = 32607)
+    z8 = ImageFootprint(origin = (150.0, 950.0), spacing = (10.0, -10.0), size = (50, 50), crs = 32608)
+    same = ImageFootprint(origin = (150.0, 950.0), spacing = (10.0, -10.0), size = (50, 50), crs = 32607)
+
+    @test_throws "one coordinate reference system" coregister(z7, z8; dt = 1.0)
+    err = try
+        coregister(z7, z8; dt = 1.0)
+    catch e
+        sprint(showerror, e)
+    end
+    # Both codes named, so the caller knows which to reproject.
+    @test occursin("32607", err) && occursin("32608", err)
+
+    # Matching codes pass, and give the same overlap the CRS-less footprints would.
+    @test coregister(z7, same; dt = 1.0).coordinate.size ==
+          coregister(ImageFootprint(origin = (100.0, 900.0), spacing = (10.0, -10.0), size = (50, 50)),
+                     ImageFootprint(origin = (150.0, 950.0), spacing = (10.0, -10.0), size = (50, 50));
+                     dt = 1.0).coordinate.size
+
+    # An unknown CRS means "not checked here", not "assumed to agree" — which is what every footprint
+    # built before this argument existed is, so the old behavior is unchanged.
+    none = ImageFootprint(origin = (150.0, 950.0), spacing = (10.0, -10.0), size = (50, 50))
+    @test coregister(z7, none; dt = 1.0) isa CoregisteredPair
+    @test coregister(none, z8; dt = 1.0) isa CoregisteredPair
+    @test coregister(none, none; dt = 1.0) isa CoregisteredPair
+
+    # An Integer is read as an EPSG code, as `MapGrid` reads one, so these are the same footprint.
+    @test ImageFootprint(origin = (0.0, 0.0), spacing = (1.0, -1.0), size = (2, 2), crs = 32607).crs ==
+          ImageFootprint(origin = (0.0, 0.0), spacing = (1.0, -1.0), size = (2, 2),
+                         crs = GFT.EPSG(32607)).crs
+end
+
 @testset "type stable" begin
     a = ImageFootprint(origin = (0.0, 100.0), spacing = (10.0, -10.0), size = (10, 10))
     # `CoregisteredPair` is parameterized on the coordinate type rather than an element type, so a
-    # coregistered projected pair is a `CoregisteredPair{ProjectedCoordinate{Float64}}`.
+    # coregistered projected pair is a `CoregisteredPair{ProjectedCoordinate{Float64}}` — with the
+    # secondary-coordinate parameter `Nothing`, since an overlap is the frame both images share.
     @test @inferred(coregister(a, a; dt = 1.0)) isa
-        CoregisteredPair{ProjectedCoordinate{Float64}}
+        CoregisteredPair{ProjectedCoordinate{Float64},Nothing}
 end

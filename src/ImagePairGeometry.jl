@@ -26,7 +26,7 @@ converts its result to velocity.
 """
 module ImagePairGeometry
 
-using StaticArrays: SVector
+using StaticArrays: SVector, MMatrix
 using Extents: Extent
 import GeoFormatTypes as GFT
 import GeoInterface
@@ -35,11 +35,28 @@ import GeoInterface
 import FastGeoProjections as FGP
 
 export ImageFootprint, CoregisteredPair, coregister
+# The offset between the two images of a pair. Exported alongside `CoregisteredPair` because the pair's
+# `secondary_offset_coordinate` field exists only to feed it. `height_sensitivity` says whether that
+# offset is a pixel shift at all or mostly parallax, which a caller has to be able to ask.
+export pixel_offset, height_sensitivity, OffsetField, LatticeOffsetField
+# The polynomial form, and the constants its order selection rests on — a caller checking whether their
+# pair is one a low-order fit describes needs both.
+export OffsetFit, fit_offset, offset_fit_terms
+export OFFSET_FIT_MAX_ORDER, OFFSET_FIT_MIN_NODES_PER_TERM
+# The sinc kernel. `SINC_*` are exported because a caller sizing a chip or a halo needs the same numbers
+# the kernel was built with.
+export SincKernel, sinc_interpolate, SINC_LEN, SINC_HALF, SINC_ONE, SINC_SUB
+# The lazy resampled image. Takes plain matrices, so a reader supplies the samples and this package
+# supplies the geometry — the same boundary the rest of the radar path draws.
+export ResampledSLC
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
 # because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
 export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
+# Terrain height for `rdr2geo`. A bare number is still accepted everywhere; these are for a caller
+# supplying a varying source, and `height_at` is what such a source implements.
+export AbstractHeightSource, ConstantHeight, height_at
 # Opt-in, and not bitwise: `chebyshev_orbit` trades the interpolant's position agreement for about
 # 1.17x of a radar point. See its docstring and `REFERENCE.md`.
 export chebyshev_orbit
@@ -74,6 +91,9 @@ include("kernel/rounding.jl")
 include("radar/ellipsoid.jl")
 include("radar/orbit.jl")
 include("radar/geo2rdr.jl")
+# Before `radar/rdr2geo.jl`: the solve snaps each candidate to a height source, so `height_at` and
+# `reference_height` must exist.
+include("radar/height.jl")
 include("radar/rdr2geo.jl")
 include("coordinates.jl")
 include("transforms.jl")
@@ -98,6 +118,18 @@ include("blocks.jl")
 # After `blocks.jl`: `InterpolatedTransform` subtypes `AbstractTransformFactory`, so that type must
 # exist first.
 include("interpolate.jl")
+# After `interpolate.jl`: `LatticeOffsetField` tabulates the offset with `build_lattice` and takes a
+# `LatticeInterpolation`, so the lattice machinery must exist. After `radar/coordinate.jl` for the same
+# reason `pair.jl`'s checks are here — `pixel_offset` dispatches on both coordinate types at once. The
+# solving half of the radar method is in `radar/rdr2rdr.jl`.
+include("misregistration.jl")
+include("radar/rdr2rdr.jl")
+# After `misregistration.jl`: the fit samples an offset field, though it takes any callable of `(x, y, z)`
+# rather than a field type specifically.
+include("offsetfit.jl")
+# Independent of everything above it: the kernel takes a matrix and a position and knows nothing about
+# pairs or coordinates.
+include("resample.jl")
 
 """
     mapgrid(dem) -> MapGrid

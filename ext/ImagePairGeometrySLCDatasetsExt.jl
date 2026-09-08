@@ -27,7 +27,7 @@ module ImagePairGeometrySLCDatasetsExt
 
 using ImagePairGeometry: ImagePairGeometry, Orbit, RadarCoordinate, CoregisteredPair,
                          incidence_angle, chebyshev_orbit, LookLeft, LookRight
-using SLCDatasets: SLCDatasets, SLC, StateVectors, orbit, repeat_interval
+using SLCDatasets: SLCDatasets, SLC, StateVectors, orbit, repeat_interval, pixels
 
 # The two look-side enums are distinct types with the same meaning; neither package imports the other's.
 _look(side) = side == SLCDatasets.LookLeft ? LookLeft : LookRight
@@ -118,7 +118,49 @@ function ImagePairGeometry.CoregisteredPair(reference::SLC, secondary::SLC; kwar
     dt > 0 || throw(ArgumentError(
         "the secondary acquisition starts $(-dt) s before the reference, so the interval is not " *
         "positive; pass them in acquisition order"))
-    return CoregisteredPair(RadarCoordinate(reference; kwargs...); dt)
+    # Both coordinates, each self-consistent on its own product's clock. `pixel_offset` needs the
+    # secondary's orbit, range origin, range spacing and PRF; the geometry outputs do not read it.
+    return CoregisteredPair(RadarCoordinate(reference; kwargs...); dt,
+                            secondary = RadarCoordinate(secondary; kwargs...))
+end
+
+"""
+    ResampledSLC(secondary::SLCDatasets.SLC, offset; amplitude_only = false, kwargs...)
+
+The secondary acquisition's samples on the reference's grid, read from the product.
+
+Takes the acquisition where the core takes a matrix, so a caller does not reach for `pixels` and the
+samples and the mode travel together. `offset` and `kwargs` are as
+[`ResampledSLC`](@ref) documents them.
+
+# TOPS is refused here
+
+Sentinel-1 IW steers the antenna in azimuth across each burst, putting a steep ramp on the azimuth phase.
+Interpolating those samples without removing the ramp first aliases it, worst at the burst edges, and the
+result is a phase-corrupted image that looks entirely valid. `SLCDatasets` does not yet parse the three
+annotation fields a deramp needs — see its `deramp_parameters` — so this refuses rather than producing
+one.
+
+`amplitude_only = true` permits it, because taking the magnitude discards the phase and so is insensitive
+to the ramp. That is a real use: amplitude feature tracking on Sentinel-1 is what most of this pipeline
+does. It is a keyword rather than the default so that the choice is written at the call site, where a
+reader can see which kind of result they are holding.
+
+This is the only place the check can be made. A bare samples matrix carries no record of how it was
+collected, so the core's `ResampledSLC` cannot ask — it documents the hazard and this enforces it.
+"""
+function ImagePairGeometry.ResampledSLC(secondary::SLC, offset::AbstractMatrix;
+                                        amplitude_only::Bool = false, kwargs...)
+    if SLCDatasets.is_tops(secondary) && !amplitude_only
+        throw(ArgumentError(
+            "this is a TOPS acquisition, whose azimuth phase carries a per-burst ramp that must be " *
+            "removed before its complex samples are interpolated and reapplied afterwards. " *
+            "SLCDatasets does not yet parse the annotation fields that needs — call " *
+            "`SLCDatasets.deramp_parameters` to see which — so resampling the complex samples would " *
+            "produce a phase-corrupted image that looks valid. Pass `amplitude_only = true` if the " *
+            "magnitudes are all you will read, which is insensitive to the ramp."))
+    end
+    return ImagePairGeometry.ResampledSLC(pixels(secondary), offset; kwargs...)
 end
 
 end

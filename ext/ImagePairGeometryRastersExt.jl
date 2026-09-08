@@ -131,6 +131,10 @@ pixel inward.
 
 Only the geometry is read, never the pixels, so this is cheap on a disk-backed scene and needs no
 data at all.
+
+The raster's CRS comes across, so [`coregister`](@ref) can make the check the reference makes: two scenes
+in different coordinate systems have no meaningful overlap. A raster carrying none gives a footprint
+carrying none, and then only the pixel geometry is compared.
 """
 function ImagePairGeometry.image_footprint(image::AbstractRaster)
     x, y = dims(image, X), dims(image, Y)
@@ -140,7 +144,7 @@ function ImagePairGeometry.image_footprint(image::AbstractRaster)
         (Float64(first(x)) + _edge_offset(lookup(x), dx),
          Float64(first(y)) + _edge_offset(lookup(y), dy)) : (gt[1], gt[4])
     return ImageFootprint(origin = (edge[1] + dx / 2, edge[2] + dy / 2), spacing = (dx, dy),
-                          size = (length(x), length(y)))
+                          size = (length(x), length(y)), crs = crs(image))
 end
 
 function _step_of(d, name::Symbol)
@@ -539,6 +543,84 @@ function finish_sink(p::PreparedGeoTIFF)
     return p.paths
 end
 
-export RasterInputs, GeoTIFFOutputs
+"""
+    RasterHeight(dem; missing_height = 0.0)
+
+Terrain height sampled from a raster, for `rdr2geo` to iterate against — see the
+[Radar geometry](radar.md) page.
+
+The raster is indexed in **degrees** and the solve asks in **radians**, so this converts; that is the
+whole reason a raster-backed source is a type rather than a closure a caller writes, since getting the
+conversion wrong places every ground point somewhere plausible and wrong.
+
+`missing_height` is used where the query falls outside the raster or lands on its nodata value. Zero — the
+ellipsoid — is the default rather than an error, because a swath's corners routinely reach past a regional
+DEM and refusing there would reject the acquisition for a few pixels of margin. Pass `NaN` to have those
+points carry through as non-finite instead, which is what a caller who would rather see them does.
+
+Nearest-neighbour sampling, deliberately: the iteration reads this up to forty times per pixel, and a
+bilinear read would be four raster lookups each time for a difference far below the metre-scale accuracy
+of any DEM this would use.
+
+```julia
+using Rasters
+src = RasterHeight(Raster("dem.tif"))
+llh = rdr2geo(orbit, Ellipsoid(), aztime, range; height = src, wavelength, side)
+```
+"""
+struct RasterHeight{R,T} <: ImagePairGeometry.AbstractHeightSource
+    dem::R
+    missing_height::T
+    # The mean of the raster, as the iteration's starting height. Computed once here rather than per
+    # solve: `reference_height` is called on every `rdr2geo`, and reducing a DEM per call would dominate.
+    reference::Float64
+    # The sampled extent in degrees, half a cell beyond the outermost centres. Held rather than derived
+    # per query because `height_at` runs up to forty times per pixel.
+    xlo::Float64
+    xhi::Float64
+    ylo::Float64
+    yhi::Float64
+end
+
+function RasterHeight(dem::AbstractRaster; missing_height = 0.0)
+    mv = Rasters.missingval(dem)
+    vals = Iterators.filter(v -> isfinite(v) && (mv === nothing || v != mv), skipmissing(dem))
+    n, tot = 0, 0.0
+    for v in vals
+        n += 1
+        tot += Float64(v)
+    end
+    # An all-nodata DEM has no mean to start from, and sea level is the honest fallback.
+    ref = n == 0 ? 0.0 : tot / n
+
+    xs, ys = dims(dem, X), dims(dem, Y)
+    dx, dy = abs(_step_of(xs, :X)), abs(_step_of(ys, :Y))
+    xlo, xhi = extrema(Float64.(collect(xs)))
+    ylo, yhi = extrema(Float64.(collect(ys)))
+    return RasterHeight{typeof(dem),typeof(missing_height)}(
+        dem, missing_height, ref, xlo - dx / 2, xhi + dx / 2, ylo - dy / 2, yhi + dy / 2)
+end
+
+ImagePairGeometry.reference_height(h::RasterHeight) = h.reference
+
+function ImagePairGeometry.height_at(h::RasterHeight, lon::Real, lat::Real)
+    # Radians in, degrees out: the solve's units against the raster's.
+    x, y = rad2deg(Float64(lon)), rad2deg(Float64(lat))
+
+    # The extent test is explicit, and it has to be: `Near` *clamps* rather than failing, so a query well
+    # outside the raster silently returns its nearest corner. A swath reaching past a regional DEM would
+    # then be solved against a plausible height from hundreds of kilometres away — the exact shape of
+    # error this package exists to refuse. Half a cell of tolerance, since a query inside the last cell is
+    # legitimately nearest to its centre.
+    (x < h.xlo || x > h.xhi || y < h.ylo || y > h.yhi) && return Float64(h.missing_height)
+
+    v = h.dem[X(Near(x)), Y(Near(y))]
+    mv = Rasters.missingval(h.dem)
+    (v === missing || (mv !== nothing && v == mv)) && return Float64(h.missing_height)
+    vf = Float64(v)
+    return isfinite(vf) ? vf : Float64(h.missing_height)
+end
+
+export RasterInputs, GeoTIFFOutputs, RasterHeight
 
 end

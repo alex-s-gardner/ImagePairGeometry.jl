@@ -19,6 +19,8 @@ makedocs(;
         "Home" => "index.md",
         "Streaming the output" => "streaming.md",
         "Radar geometry" => "radar.md",
+        "Coregistration" => "coregistration.md",
+        "Raster IO" => "rasters.md",
     ],
 )
 

@@ -17,7 +17,7 @@ using Test
 # An extension's exports are not brought in by `using ImagePairGeometry`, so its names are reached
 # through the module itself — the same way a caller would.
 const RA_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)
-using .RA_EXT: RasterInputs, GeoTIFFOutputs
+using .RA_EXT: RasterInputs, GeoTIFFOutputs, RasterHeight
 
 """A raster on the grid `gt` describes, written to `path` so it is disk-backed when read back.
 
@@ -531,3 +531,71 @@ end
     @test_throws "not regularly spaced" mapgrid(r)
     @test_throws "not regularly spaced" ImagePairGeometry.image_footprint(r)
 end
+
+@testset "a raster height source" begin
+    # `rdr2geo` iterates against terrain, and a raster is how real terrain arrives. Two things can go
+    # wrong quietly here and both are checked: the units — the solve holds radians and a geographic raster
+    # is indexed in degrees — and an out-of-bounds query, which `Near` answers by *clamping* to the
+    # nearest edge rather than failing. A swath reaching past a regional DEM would then be solved against
+    # a height from hundreds of kilometres away.
+    RH = RasterHeight
+    dem = Raster(Float64[100 200; 300 400], (X(10.0:1.0:11.0), Y(50.0:1.0:51.0)))
+    h = RH(dem)
+
+    # The iteration starts from the DEM's mean, computed once at construction.
+    @test ImagePairGeometry.reference_height(h) == 250.0
+
+    # Radians in, degrees out. Passing degrees straight through would read the wrong cell — or, for a
+    # polar scene, none at all.
+    @test ImagePairGeometry.height_at(h, deg2rad(10.0), deg2rad(50.0)) == 100.0
+    @test ImagePairGeometry.height_at(h, deg2rad(11.0), deg2rad(51.0)) == 400.0
+    # Nearest-neighbour, so a query inside a cell takes that cell's value.
+    @test ImagePairGeometry.height_at(h, deg2rad(10.4), deg2rad(50.6)) == 200.0
+
+    # Outside the sampled extent the fallback is used, not a clamped edge value.
+    @test ImagePairGeometry.height_at(h, deg2rad(179.0), deg2rad(80.0)) == 0.0
+    @test ImagePairGeometry.height_at(RH(dem; missing_height = -9999.0),
+                                     deg2rad(179.0), deg2rad(80.0)) == -9999.0
+    # `NaN` carries through for a caller who would rather see the gap than a substituted height.
+    @test isnan(ImagePairGeometry.height_at(RH(dem; missing_height = NaN),
+                                          deg2rad(179.0), deg2rad(80.0)))
+    # Half a cell of tolerance: a query inside the outermost cell is legitimately nearest its centre.
+    @test ImagePairGeometry.height_at(h, deg2rad(10.4), deg2rad(49.7)) == 100.0
+
+    # A flat raster must agree with the equivalent constant *bitwise*, which is what says the raster path
+    # feeds the solve the same numbers rather than merely similar ones.
+    ts = collect(0.0:10.0:400.0)
+    R, incl = 7.0e6, deg2rad(98.0)
+    om = sqrt(3.986004418e14 / R^3)
+    orb = ImagePairGeometry.Orbit(;
+        time = ts,
+        position = [ImagePairGeometry.SVector(R*cos(om*t), R*sin(om*t)*cos(incl),
+                                              R*sin(om*t)*sin(incl)) for t in ts],
+        velocity = [ImagePairGeometry.SVector(-R*om*sin(om*t), R*om*cos(om*t)*cos(incl),
+                                              R*om*cos(om*t)*sin(incl)) for t in ts])
+    el = ImagePairGeometry.Ellipsoid()
+    sea = ImagePairGeometry.rdr2geo(orb, el, 200.0, 8.2e5; height = 0.0, wavelength = 0.055,
+                                    side = ImagePairGeometry.LookRight)
+    lon0, lat0 = rad2deg(sea[1]), rad2deg(sea[2])
+    flat = Raster(fill(800.0, 41, 41),
+                  (X(range(lon0 - 2, lon0 + 2; length = 41)),
+                   Y(range(lat0 - 2, lat0 + 2; length = 41))))
+    want = ImagePairGeometry.rdr2geo(orb, el, 200.0, 8.2e5; height = 800.0, wavelength = 0.055,
+                                      side = ImagePairGeometry.LookRight)
+    got = ImagePairGeometry.rdr2geo(orb, el, 200.0, 8.2e5; height = RH(flat), wavelength = 0.055,
+                                     side = ImagePairGeometry.LookRight)
+    @test all(reinterpret(UInt64, want) .== reinterpret(UInt64, got))
+
+    # A sloped raster moves the ground point, and converges. The height it lands on is the raster's value
+    # there, which is the fixed-point property a units error would break.
+    sloped = Raster([500.0 + 400.0 * (i - 1) / 40 for i in 1:41, j in 1:41],
+                    (X(range(lon0 - 2, lon0 + 2; length = 41)),
+                     Y(range(lat0 - 2, lat0 + 2; length = 41))))
+    llh, converged = ImagePairGeometry.rdr2geo_converged(
+        orb, el, 200.0, 8.2e5; height = RH(sloped), wavelength = 0.055,
+        side = ImagePairGeometry.LookRight)
+    @test converged
+    @test llh[3] ≈ ImagePairGeometry.height_at(RH(sloped), llh[1], llh[2]) atol = 1.0
+    @test llh != want
+end
+

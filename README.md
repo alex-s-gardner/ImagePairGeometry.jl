@@ -46,6 +46,12 @@ deliberate divergence. The radar path is checked on a real NISAR pair over Jakob
 on the committed synthetic fixtures: 4.7 million grid points, every integer band agreeing, at 2.4× the
 compiled reference single-threaded and 14.7× on eight tasks.
 
+Complete *against geogrid* is the claim, and it is narrower than it sounds: geogrid computes one pixel
+index per grid point and hands it to a correlator for both images, which holds only because the reference
+pipeline resamples the secondary onto the reference grid before geogrid runs. Two radar acquisitions have
+different orbits, so they do not share a grid — about 18 samples of range on a 24-day Sentinel-1 pair. See
+[Coregistration](docs/src/coregistration.md) for what measures and removes that.
+
 Reading a real product's metadata is not this package's job — it depends on no IO stack. Load
 [SLCDatasets.jl](https://github.com/alex-s-gardner/SLCDatasets.jl) alongside it and an extension takes an
 acquisition wherever a `RadarCoordinate` or a `CoregisteredPair` is built; see

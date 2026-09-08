@@ -151,12 +151,23 @@ overlap the grid — I measured `-886 × -4304` for a UTM scene against a mismat
 stereographic DEM — and passes it to `GDALDriver::Create` as a raster size, and to a
 variable-length stack array as a length. `grid_window` throws.
 
-### `coregister` compares pixel geometry, not EPSG codes
+### `coregister` compares EPSG codes only when it is given them
 
-The reference opens both images with GDAL and refuses the pair if their EPSG codes differ.
-`ImageFootprint` carries no CRS — it is deliberately just the geotransform and size, so the
-function is pure arithmetic and testable without GDAL — so the equivalent check available is that
-the pixel spacings match. A caller holding CRSs must compare them.
+The reference opens both images with GDAL and refuses the pair if their EPSG codes differ. Here
+`ImageFootprint`'s CRS is **optional**, so the check is made when both footprints carry one and skipped
+when either does not; the pixel spacings are always compared.
+
+The reason for optional rather than required is that the intersection arithmetic needs no CRS, and
+requiring one would make `coregister` untestable without GDAL — the fixtures build footprints from
+numbers. The `Rasters` extension supplies it from the raster, so a caller reading scenes from disk gets
+the reference's check without asking; a caller assembling a footprint by hand gets it by passing `crs`.
+
+An absent CRS means *not checked here*, not *assumed to agree*. Two spellings of one CRS — an EPSG code
+and its WKT — compare unequal and are refused, since resolving them would need a projection library in the
+core; that errs toward asking the caller to be consistent rather than toward accepting a real mismatch.
+
+This is not a hypothetical check. Both cross-path Landsat pairs in the ITS_LIVE golden set straddle UTM
+zones — 32607 against 32608 — so pairing adjacent paths reaches it.
 
 ### A zero-area overlap throws
 
@@ -767,3 +778,83 @@ iteration. At 51 iterations that is under 1e-8 of an azimuth line. A zero offset
 - `acos` differs by 1 ULP between openlibm and the system libm, which cannot flip a projected-path
   output — `cross_check` sits at 82–90°, far from its `> 1.0` gate — but radar geometry is oblique
   and can approach it.
+
+## Coregistration: the one path whose reference is not geogrid
+
+Everything above reimplements geogrid. This section does not, because geogrid has no counterpart to it:
+geogrid computes one pixel index per grid point and hands it to a correlator for both images, which is
+right only because the reference *pipeline* resamples the secondary SLC onto the reference grid before
+geogrid runs. That resampling is upstream of the module this package reproduces.
+
+So the reference here is **isce3**, and specifically the routines the NISAR workflow calls rather than the
+older ones it retains:
+
+| operation | reference | agreement |
+|---|---|---|
+| `pixel_offset` | `isce3.geometry.geo2rdr`, twice | 1.15e-9 of a range sample |
+| `SincKernel` | `isce3::core::Sinc2dInterpolator` | **bitwise**, 73 coefficients |
+| `sinc_interpolate` | `isce3::core::Sinc2dInterpolator::interp_impl` | **bitwise**, 7 positions |
+| `ResampledSLC` | `isce3::image::v2::resampleToCoords` | **bitwise**, 144 samples |
+
+Fixtures: `test/reference/gen_rdr2rdr.py`, `gen_sinc.py`, `gen_resamp.py`. All three commit their inputs, so
+the comparisons need no granule and no network.
+
+### Two tiers again, and they fall differently here
+
+The kernel and the resampler are **bitwise**, which is a stronger result than the radar geometry achieves —
+and the reason is that neither involves the ellipsoid. The coefficients are `cos` and `sin` of exactly
+representable arguments followed by a normalization, and the interpolation is a fixed sum of products, so
+there is no `atan2` and no Hermite cancellation to carry a last-bit difference. Bitwise is therefore
+achievable and is asserted rather than bounded.
+
+`pixel_offset` is not bitwise, and inherits exactly the bound the ellipsoid conversions already carry:
+1.9e-9 m of ground position, which is 1.15e-9 of a range sample and 2.7 nm on the ground. It is two
+`geo2rdr` solves and nothing else, so it adds no error of its own.
+
+### What bitwise depended on, in the resampler
+
+isce3 accumulates its 64-tap sum in `complex<float>`, casting each weight to it:
+
+```cpp
+ret += arrin(intpy-i, intpx-j) * static_cast<U>(_kernel(ifracy,i)) * static_cast<U>(_kernel(ifracx,j));
+```
+
+Accumulating in `Float64` instead is *more accurate* and differs by about one `Float32` ULP — measured, 3
+of 5 probed positions disagreed in the last bit. The reference's accumulation type is reproduced, and the
+wider one is offered as `sinc_interpolate(...; accumulate = ComplexF64)` with a test pinning the direction,
+so a future widening cannot silently break the agreement. The association matters too: `a * wy * wx` and
+`a * (wy * wx)` round differently at `Float32`, so the reference's grouping is transcribed rather than
+tidied.
+
+### Reproduced quirks
+
+*The kernel table index truncates.* `int(frac * SINC_SUB)`, clamped — not a rounding. So the interpolant is
+piecewise constant in the sub-pixel coordinate at a step of 1/8192 of a pixel, and two positions inside one
+step return the identical value. A ramp is therefore recovered only to about 1.2e-4 of a pixel.
+
+*The tap sum runs downward.* `_sinc_eval_2d` reads `arrin(intpy - i, intpx - j)`, so the kernel is applied
+reversed relative to how it reads; `interp_impl` compensates by adding the half length to the integer part
+before calling it. Either half alone lands on the wrong samples.
+
+*`_sinc_coef` floors inside the sinc argument.* `s = floor(i - soff) * beta / decfactor` makes the argument
+piecewise constant across each block of `decfactor` entries, which is not what a continuous resampling
+kernel would do. Transcribed as written.
+
+*An unreachable sample is zero, not an error.* `interp_impl` returns zero where its stencil does not fit.
+Zero is a sample value, indistinguishable from real data, so `ResampledSLC` tests the fit itself and returns
+its fill value — `NaN + NaN·im` by default, matching `resample_slc_blocks`. That is a divergence in the
+resampler and a faithful reproduction in the kernel, which is why both behaviours exist at their own level.
+
+### Deliberate divergences
+
+*`rdr2geo` guards two square roots the reference does not.* A varying height source can drive a candidate to
+a height no look angle on the range sphere reaches, taking `sqrt` of a negative. isce3 faults on the same
+input, and faulting is not a behavior with a value to reproduce, so `_reachable` tests both roots before
+`update_llh` and leaves `converged` false. It duplicates three lines rather than guarding inside them,
+because those lines are asserted bitwise and a branch among them would sit on the path that exactness rests
+on. The constant-height path cannot reach the guard, so it costs the reference's behaviour nothing.
+
+*TOPS is refused rather than mishandled.* isce3's resampler takes a Doppler LUT and assumes the caller has
+dealt with any azimuth ramp. Here a TOPS acquisition is refused on the complex path, because `SLCDatasets`
+does not yet parse the three annotation fields a deramp needs. Amplitude-only use is permitted, since
+taking the magnitude discards the phase.
