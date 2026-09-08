@@ -238,37 +238,90 @@ is required: converting an output pixel to an azimuth time and a slant range nee
     question, and the extension's `ResampledSLC(::SLC, offset)` refuses a TOPS acquisition unless
     `amplitude_only = true` says the phase will not be read.
 """
-struct ResampledSLC{S<:AbstractMatrix,O<:AbstractMatrix,K,D,C} <: AbstractMatrix{ComplexF32}
+struct ResampledSLC{S<:AbstractMatrix,O<:AbstractMatrix,K,D,C,R} <: AbstractMatrix{ComplexF32}
     samples::S
     offset::O
     kernel::K
     fill::ComplexF32
     doppler::D
     coordinate::C
+    carrier::R
 
-    function ResampledSLC{S,O,K,D,C}(samples, offset, kernel, fill, doppler,
-                                     coordinate) where {S,O,K,D,C}
+    function ResampledSLC{S,O,K,D,C,R}(samples, offset, kernel, fill, doppler, coordinate,
+                                       carrier) where {S,O,K,D,C,R}
+        # Checked before the coordinate, since supplying both hooks is the more basic mistake: only one of
+        # them would take effect, and which one is an implementation detail rather than a choice. Both would
+        # otherwise be removed from the same chip, and their sum is not what either means.
+        (doppler === nothing || carrier === nothing) || throw(ArgumentError(
+            "ResampledSLC was given both a `doppler` model and a `carrier`, which are two ways to say " *
+            "the same thing: the azimuth phase to remove before interpolating. Supply one. A carrier " *
+            "that needs both terms should evaluate both and return their sum."))
         # A Doppler model without a coordinate cannot be evaluated: the model is a function of azimuth
         # time and slant range, and only the coordinate converts a pixel to those.
         (doppler === nothing || coordinate !== nothing) || throw(ArgumentError(
             "ResampledSLC was given a doppler model but no coordinate; evaluating the model needs the " *
             "reference acquisition's RadarCoordinate to turn an output pixel into an azimuth time and " *
             "a slant range. Pass `coordinate`, or leave `doppler` unset for the zero-Doppler case."))
-        return new{S,O,K,D,C}(samples, offset, kernel, fill, doppler, coordinate)
+        return new{S,O,K,D,C,R}(samples, offset, kernel, fill, doppler, coordinate, carrier)
     end
 end
 
 function ResampledSLC(samples::AbstractMatrix, offset::AbstractMatrix;
                       kernel = SincKernel(), fill = ComplexF32(NaN32, NaN32),
-                      doppler = nothing, coordinate = nothing)
+                      doppler = nothing, coordinate = nothing, carrier = nothing)
     return ResampledSLC{typeof(samples),typeof(offset),typeof(kernel),typeof(doppler),
-                        typeof(coordinate)}(
-        samples, offset, kernel, ComplexF32(fill), doppler, coordinate)
+                        typeof(coordinate),typeof(carrier)}(
+        samples, offset, kernel, ComplexF32(fill), doppler, coordinate, carrier)
 end
 
 Base.size(r::ResampledSLC) = size(r.offset)
 Base.axes(r::ResampledSLC) = axes(r.offset)
 Base.IndexStyle(::Type{<:ResampledSLC}) = IndexCartesian()
+
+# The azimuth phase an interpolation has to take out and put back, as a function of position in the
+# *secondary's* samples.
+#
+# Two kinds reach this, and they are not the same shape, which is why the phase rather than a frequency is
+# the protocol. `Resample.cpp`'s Doppler is a frequency turned into a phase linear in the chip row. A TOPS
+# azimuth ramp is quadratic about each burst's own center and referenced to absolute burst coordinates. A
+# frequency hook cannot express the second, and a phase hook expresses both.
+#
+# The contract: a phase is only ever used as a *difference* from the chip's integer center, so a carrier is
+# free to return a large absolute value — the difference is what the arithmetic sees, which keeps
+# `cos`/`sin` away from arguments where they lose their low bits.
+#
+# `_chip_phase` is the phase removed from the sample at `(srow, scol)`; `_out_phase` the phase reapplied for
+# the interpolated position `(y, x)`. Both are relative to `(iy, ix)`.
+
+# No carrier: zero, and both phasors collapse to exactly `1 + 0im`. Dispatched rather than computed, so the
+# no-carrier path does no phasor arithmetic at all — `_resample_at` skips it entirely.
+@inline _chip_phase(::Nothing, ::Int, ::Int, ::Int, ::Int) = 0.0
+@inline _out_phase(::Nothing, ::Float64, ::Float64, ::Int, ::Int) = 0.0
+
+# A general carrier, evaluated at absolute secondary indices and differenced against the chip's integer
+# center. The constant cancels between removal and reapplication — every tap is multiplied by `exp(-i(phi -
+# C))` and the result by `exp(i(phi_out - C))` — so subtracting it changes nothing but the magnitude of the
+# arguments `cos` and `sin` see.
+@inline _chip_phase(carrier, srow::Int, scol::Int, iy::Int, ix::Int) =
+    Float64(carrier(srow, scol)) - Float64(carrier(iy, ix))
+
+@inline _out_phase(carrier, y::Float64, x::Float64, iy::Int, ix::Int) =
+    Float64(carrier(y, x)) - Float64(carrier(iy, ix))
+
+# `Resample.cpp`'s Doppler, as a carrier. The phase is `dop * (row - iy)` and does not vary with range
+# within a chip, which is the reference's own form: it computes one frequency per output pixel and applies
+# it per chip row. Kept as its own type rather than expressed through the general path above because the
+# association of the arithmetic is what makes this bitwise against the reference — `dop * (srow - iy)` and
+# `dop * srow - dop * iy` are the same number in exact arithmetic and not always in `Float64`.
+struct DopplerCarrier
+    rad_per_sample::Float64
+end
+
+@inline _chip_phase(d::DopplerCarrier, srow::Int, ::Int, iy::Int, ::Int) =
+    d.rad_per_sample * (srow - iy)
+
+@inline _out_phase(d::DopplerCarrier, y::Float64, ::Float64, iy::Int, ::Int) =
+    d.rad_per_sample * (y - iy)
 
 # The Doppler frequency at an output pixel, in radians per sample, as `Resample.cpp` computes it:
 # `lut.eval(az_time, rg_distance) * 2 * pi / prf`. Zero without a model, which collapses both phasors to
@@ -305,24 +358,39 @@ Base.@propagate_inbounds function Base.getindex(r::ResampledSLC, i::Int, j::Int)
     (ix < half || ix > size(r.samples, 2) - half) && return r.fill
     (iy < half || iy > size(r.samples, 1) - half) && return r.fill
 
-    dop = _doppler_rad(r.doppler, r.coordinate, j - 1, i - 1)
-    return _resample_at(r.kernel, r.samples, x, y, dop, r.fill)
+    return _resample_at(r.kernel, r.samples, x, y, _carrier_at(r, i, j), r.fill)
 end
 
-# One resampled sample: the chip read with the Doppler phase removed, interpolated, and the phase for the
-# fractional azimuth position put back.
+# The carrier for one output pixel.
 #
-# Transcribes `resampleToCoords`'s inner loop. At `dop == 0` both phasors are exactly `1 + 0im`, so the
-# multiplications are identities and the result is the plain interpolation — checked in `test/resample.jl`
-# against calling `sinc_interpolate` directly, since an identity that is only nearly one would show up as
-# a drift no correlator could attribute.
+# A `doppler` model is a function of azimuth time and slant range, so it is evaluated once per output pixel
+# and the resulting frequency carried into the chip loop — the reference's own structure, and where the
+# `DopplerCarrier` wrapper comes from. A `carrier` is already a function of position, so it is used as it
+# stands. The constructor refuses both at once, so these two cases are exhaustive.
+@inline _carrier_at(r::ResampledSLC, i::Int, j::Int) = _carrier_at(r.doppler, r, i, j)
+
+# Dispatching on the `doppler` field's own type rather than on a type parameter's position: the latter is
+# fragile — a parameter added to the struct shifts it — and got this wrong once already, silently discarding
+# the carrier and resampling as though there were none.
+@inline _carrier_at(::Nothing, r::ResampledSLC, ::Int, ::Int) = r.carrier
+
+@inline _carrier_at(dop, r::ResampledSLC, i::Int, j::Int) =
+    DopplerCarrier(_doppler_rad(dop, r.coordinate, j - 1, i - 1))
+
+# One resampled sample: the chip read with the azimuth carrier phase removed, interpolated, and the phase
+# for the interpolated position put back.
+#
+# Transcribes `resampleToCoords`'s inner loop. Removing the carrier before interpolating is what makes the
+# interpolation valid: a phase varying across the chip is a frequency offset, and a signal whose band is
+# off-center aliases when resampled. The reference does this for the Doppler; a TOPS azimuth ramp is the
+# same operation with a steeper, quadratic phase.
 function _resample_at(k::SincKernel, samples::AbstractMatrix, x::Float64, y::Float64,
-                      dop::Float64, fill::ComplexF32)
+                      carrier, fill::ComplexF32)
     kl = kernel_length(k)
     half = kl ÷ 2
     chip_size = kl + 1
     iy = floor(Int, y)
-    frac_az = y - iy
+    ix = floor(Int, x)
 
     # `SINC_ONE` samples on a side, with the interpolated position inside it — the chip `resampleToCoords`
     # reads. An `MMatrix` rather than a `Matrix`: the size is a compile-time constant, so this lives on the
@@ -330,25 +398,76 @@ function _resample_at(k::SincKernel, samples::AbstractMatrix, x::Float64, y::Flo
     # buffer through the type instead would make it stateful, which a lazy array read from several tasks
     # must not be.
     chip = MMatrix{SINC_ONE,SINC_ONE,ComplexF32}(undef)
-    ix = floor(Int, x)
-    for ci in 1:chip_size
-        # The chip's rows run from `half` below the integer position, and the Doppler phase is per row.
-        srow = iy + ci - half - 1
-        phase = dop * (ci - 1 - half)
-        conj_phasor = ComplexF32(cos(phase), -sin(phase))
-        for cj in 1:chip_size
-            scol = ix + cj - half - 1
-            (srow < 1 || srow > size(samples, 1) || scol < 1 || scol > size(samples, 2)) &&
-                return fill
-            chip[ci, cj] = ComplexF32(samples[srow, scol]) * conj_phasor
-        end
-    end
+    _fill_chip!(chip, carrier, samples, iy, ix, half, chip_size) || return fill
 
     # The position within the chip: the fractional part offset by the half length, one-based.
     frac_rg = x - ix
+    frac_az = y - iy
     val = _sinc_interpolate(k, chip, half + frac_rg + 1.0, half + frac_az + 1.0, ComplexF32)
 
-    # And the phase corresponding to where in azimuth the sample was taken, reapplied.
-    phase = dop * frac_az
+    return _reapply_carrier(carrier, val, y, x, iy, ix)
+end
+
+# The chip, with the carrier removed. `false` where the stencil runs off the samples, which the caller turns
+# into the fill — zero would be indistinguishable from a real sample value.
+#
+# Three methods rather than one because what may be hoisted differs, and for the Doppler case the
+# association of the arithmetic is what holds it bitwise against the reference.
+
+# No carrier: the samples as they are. Not a multiplication by `1 + 0im` — an actual identity, so a caller
+# that supplies no carrier gets exactly what `sinc_interpolate` alone would give.
+@inline function _fill_chip!(chip, ::Nothing, samples, iy::Int, ix::Int, half::Int, chip_size::Int)
+    for ci in 1:chip_size
+        srow = iy + ci - half - 1
+        for cj in 1:chip_size
+            scol = ix + cj - half - 1
+            _in_samples(samples, srow, scol) || return false
+            chip[ci, cj] = ComplexF32(samples[srow, scol])
+        end
+    end
+    return true
+end
+
+# The Doppler: one phasor per chip row, since the reference's frequency does not vary with range within a
+# chip. Hoisting it out of the inner loop is the reference's own structure.
+@inline function _fill_chip!(chip, d::DopplerCarrier, samples, iy::Int, ix::Int, half::Int,
+                             chip_size::Int)
+    for ci in 1:chip_size
+        srow = iy + ci - half - 1
+        phase = _chip_phase(d, srow, ix, iy, ix)
+        conj_phasor = ComplexF32(cos(phase), -sin(phase))
+        for cj in 1:chip_size
+            scol = ix + cj - half - 1
+            _in_samples(samples, srow, scol) || return false
+            chip[ci, cj] = ComplexF32(samples[srow, scol]) * conj_phasor
+        end
+    end
+    return true
+end
+
+# A general carrier varies with range as well as azimuth — a TOPS ramp's coefficient is a function of slant
+# range — so the phase is per sample and nothing may be hoisted.
+@inline function _fill_chip!(chip, carrier, samples, iy::Int, ix::Int, half::Int, chip_size::Int)
+    for ci in 1:chip_size
+        srow = iy + ci - half - 1
+        for cj in 1:chip_size
+            scol = ix + cj - half - 1
+            _in_samples(samples, srow, scol) || return false
+            phase = _chip_phase(carrier, srow, scol, iy, ix)
+            chip[ci, cj] = ComplexF32(samples[srow, scol]) * ComplexF32(cos(phase), -sin(phase))
+        end
+    end
+    return true
+end
+
+@inline _in_samples(samples, srow::Int, scol::Int) =
+    srow >= 1 && srow <= size(samples, 1) && scol >= 1 && scol <= size(samples, 2)
+
+# The phase for where the sample was actually taken, reapplied. An identity without a carrier, for the same
+# reason the chip fill is.
+@inline _reapply_carrier(::Nothing, val::ComplexF32, ::Float64, ::Float64, ::Int, ::Int) = val
+
+@inline function _reapply_carrier(carrier, val::ComplexF32, y::Float64, x::Float64, iy::Int, ix::Int)
+    phase = _out_phase(carrier, y, x, iy, ix)
     return val * ComplexF32(cos(phase), sin(phase))
 end

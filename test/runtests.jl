@@ -18,6 +18,7 @@ include("npz.jl")
     @time @testset "misregistration" begin include("misregistration.jl") end
     @time @testset "offset fit" begin include("offsetfit.jl") end
     @time @testset "sinc resampling" begin include("resample.jl") end
+    @time @testset "TOPS azimuth carrier" begin include("topsramp.jl") end
     @time @testset "window" begin include("window.jl") end
     @time @testset "kernel" begin include("kernel.jl") end
     @time @testset "velocity conversion" begin include("velocity.jl") end
