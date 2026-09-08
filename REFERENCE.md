@@ -151,12 +151,23 @@ overlap the grid — I measured `-886 × -4304` for a UTM scene against a mismat
 stereographic DEM — and passes it to `GDALDriver::Create` as a raster size, and to a
 variable-length stack array as a length. `grid_window` throws.
 
-### `coregister` compares pixel geometry, not EPSG codes
+### `coregister` compares EPSG codes only when it is given them
 
-The reference opens both images with GDAL and refuses the pair if their EPSG codes differ.
-`ImageFootprint` carries no CRS — it is deliberately just the geotransform and size, so the
-function is pure arithmetic and testable without GDAL — so the equivalent check available is that
-the pixel spacings match. A caller holding CRSs must compare them.
+The reference opens both images with GDAL and refuses the pair if their EPSG codes differ. Here
+`ImageFootprint`'s CRS is **optional**, so the check is made when both footprints carry one and skipped
+when either does not; the pixel spacings are always compared.
+
+The reason for optional rather than required is that the intersection arithmetic needs no CRS, and
+requiring one would make `coregister` untestable without GDAL — the fixtures build footprints from
+numbers. The `Rasters` extension supplies it from the raster, so a caller reading scenes from disk gets
+the reference's check without asking; a caller assembling a footprint by hand gets it by passing `crs`.
+
+An absent CRS means *not checked here*, not *assumed to agree*. Two spellings of one CRS — an EPSG code
+and its WKT — compare unequal and are refused, since resolving them would need a projection library in the
+core; that errs toward asking the caller to be consistent rather than toward accepting a real mismatch.
+
+This is not a hypothetical check. Both cross-path Landsat pairs in the ITS_LIVE golden set straddle UTM
+zones — 32607 against 32608 — so pairing adjacent paths reaches it.
 
 ### A zero-area overlap throws
 

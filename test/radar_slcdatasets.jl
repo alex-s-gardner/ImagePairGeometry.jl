@@ -129,6 +129,19 @@ end
         @test pair.dt === dt
         # The pair's geometry is the reference's, not a blend of the two.
         @test pair.coordinate.starting_range === a.geometry.starting_range
+
+        # The secondary's own coordinate comes across too, which is what `pixel_offset` needs and what a
+        # pair built from a single acquisition cannot supply. It must be the *secondary's* geometry:
+        # filling it from the reference would make the offset identically zero and look like agreement.
+        sec = pair.secondary_offset_coordinate
+        @test sec isa RadarCoordinate
+        @test sec.sensing_start === b.geometry.sensing_start
+        @test sec.starting_range === b.geometry.starting_range
+        @test sec.prf === b.geometry.prf
+        # These two products differ only by epoch, so their `sensing_start` values agree on their own
+        # clocks and the 48 days live in the epochs. That is exactly the case where reading one clock for
+        # the other passes unnoticed, so the orbits are asserted distinct rather than the times.
+        @test sec.orbit !== pair.coordinate.orbit
     end
 end
 

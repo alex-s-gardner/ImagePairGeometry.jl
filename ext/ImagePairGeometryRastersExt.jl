@@ -131,6 +131,10 @@ pixel inward.
 
 Only the geometry is read, never the pixels, so this is cheap on a disk-backed scene and needs no
 data at all.
+
+The raster's CRS comes across, so [`coregister`](@ref) can make the check the reference makes: two scenes
+in different coordinate systems have no meaningful overlap. A raster carrying none gives a footprint
+carrying none, and then only the pixel geometry is compared.
 """
 function ImagePairGeometry.image_footprint(image::AbstractRaster)
     x, y = dims(image, X), dims(image, Y)
@@ -140,7 +144,7 @@ function ImagePairGeometry.image_footprint(image::AbstractRaster)
         (Float64(first(x)) + _edge_offset(lookup(x), dx),
          Float64(first(y)) + _edge_offset(lookup(y), dy)) : (gt[1], gt[4])
     return ImageFootprint(origin = (edge[1] + dx / 2, edge[2] + dy / 2), spacing = (dx, dy),
-                          size = (length(x), length(y)))
+                          size = (length(x), length(y)), crs = crs(image))
 end
 
 function _step_of(d, name::Symbol)

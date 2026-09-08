@@ -118,7 +118,10 @@ function ImagePairGeometry.CoregisteredPair(reference::SLC, secondary::SLC; kwar
     dt > 0 || throw(ArgumentError(
         "the secondary acquisition starts $(-dt) s before the reference, so the interval is not " *
         "positive; pass them in acquisition order"))
-    return CoregisteredPair(RadarCoordinate(reference; kwargs...); dt)
+    # Both coordinates, each self-consistent on its own product's clock. `pixel_offset` needs the
+    # secondary's orbit, range origin, range spacing and PRF; the geometry outputs do not read it.
+    return CoregisteredPair(RadarCoordinate(reference; kwargs...); dt,
+                            secondary = RadarCoordinate(secondary; kwargs...))
 end
 
 end

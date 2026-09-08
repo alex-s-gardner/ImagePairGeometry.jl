@@ -35,6 +35,10 @@ import GeoInterface
 import FastGeoProjections as FGP
 
 export ImageFootprint, CoregisteredPair, coregister
+# The offset between the two images of a pair. Exported alongside `CoregisteredPair` because the pair's
+# `secondary_offset_coordinate` field exists only to feed it. `height_sensitivity` says whether that
+# offset is a pixel shift at all or mostly parallax, which a caller has to be able to ask.
+export pixel_offset, height_sensitivity, OffsetField, LatticeOffsetField
 export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # The radar path's own vocabulary: a `RadarCoordinate` cannot be constructed without an `Orbit`, a
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
@@ -98,6 +102,12 @@ include("blocks.jl")
 # After `blocks.jl`: `InterpolatedTransform` subtypes `AbstractTransformFactory`, so that type must
 # exist first.
 include("interpolate.jl")
+# After `interpolate.jl`: `LatticeOffsetField` tabulates the offset with `build_lattice` and takes a
+# `LatticeInterpolation`, so the lattice machinery must exist. After `radar/coordinate.jl` for the same
+# reason `pair.jl`'s checks are here — `pixel_offset` dispatches on both coordinate types at once. The
+# solving half of the radar method is in `radar/rdr2rdr.jl`.
+include("misregistration.jl")
+include("radar/rdr2rdr.jl")
 
 """
     mapgrid(dem) -> MapGrid
