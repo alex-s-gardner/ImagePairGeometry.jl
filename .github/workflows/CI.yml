@@ -79,13 +79,13 @@ jobs:
       matrix:
         version: ['lts', '1']
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           repository: alex-s-gardner/FastGeoProjections.jl
           ref: main
           path: deps/FastGeoProjections.jl
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: alex-s-gardner/SLCDatasets.jl
           ref: main
