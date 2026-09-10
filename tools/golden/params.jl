@@ -62,12 +62,31 @@ function fetch_params(r::GoldenRun; force::Bool = false)
         # That reaches a band comparison as a coverage difference in the kernel — measured, on a run
         # whose cache was being written concurrently: `window_offset` differed on 3.5 million points
         # while every other band was bitwise.
+        #
+        # The temporary name keeps the `.tif` extension. `gdal_translate` picks its output driver from
+        # the extension when `-of` is absent, so a `.tif.partial` target is not a GeoTIFF target and the
+        # command fails outright.
         @info "windowing a parameter raster" field basename(url) window = (xoff, yoff, nx, ny)
-        tmp = path * ".partial"
+        tmp = path * ".partial.tif"
         try
-            run(pipeline(`gdal_translate -q -srcwin $xoff $yoff $nx $ny $url $tmp`;
-                         stdout = devnull, stderr = devnull))
-            isfile(tmp) || error("gdal_translate produced no $tmp")
+            # Retried, because these are range requests against a public bucket over the open internet
+            # and a single failure is far more often the network than the request. An unretried sweep of
+            # 26 runs times 12 rasters fails somewhere almost every time.
+            ok = false
+            for attempt in 1:4
+                try
+                    run(pipeline(`gdal_translate -q -srcwin $xoff $yoff $nx $ny $url $tmp`;
+                                 stdout = devnull, stderr = devnull))
+                    ok = isfile(tmp)
+                    ok && break
+                catch e
+                    attempt == 4 && rethrow()
+                    @warn "a windowed read failed; retrying" field attempt
+                    isfile(tmp) && rm(tmp; force = true)
+                    sleep(2.0 * attempt)
+                end
+            end
+            ok || error("gdal_translate produced no $tmp after 4 attempts")
             mv(tmp, path; force = true)
         finally
             isfile(tmp) && rm(tmp; force = true)

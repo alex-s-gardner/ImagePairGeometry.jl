@@ -260,6 +260,60 @@ function geogrid_dims(text::AbstractString)
     return (parse(Int, m.captures[1]), parse(Int, m.captures[2]))
 end
 
+# The raster each `GeometryInputs` field reads, as the ITS_LIVE parameter set names it. Used only to
+# repair a URL container stdout truncated; the log is the source everywhere it is intact.
+const PARAM_RASTER = Dict("dhdx" => "dhdx", "dhdy" => "dhdy", "vx" => "vx0", "vy" => "vy0",
+                          "srx" => "vxSearchRange", "sry" => "vySearchRange",
+                          "csminx" => "xMinChipSize", "csminy" => "yMinChipSize",
+                          "csmaxx" => "xMaxChipSize", "csmaxy" => "yMaxChipSize",
+                          "ssm" => "StableSurface")
+
+"""
+    repair_url(url, dem, field) -> String
+
+`url` if it is a raster path, or the one `field` names on the DEM's own tile if stdout truncated it.
+
+One run's log holds `SPS_0Polarization hh` where the search-range URL belongs: a progress line landed
+inside the token. The repair is sound because the truncated text still shows the tile prefix and the DEM
+URL — intact, and asserted so by `param_urls` — carries the directory, the tile and the resolution, so
+only the quantity's own name is supplied. A repair that disagreed with the surviving prefix is refused
+rather than trusted.
+"""
+function repair_url(url::AbstractString, dem::AbstractString, field::AbstractString)
+    endswith(url, ".tif") && return String(url)
+    name = get(PARAM_RASTER, field, nothing)
+    name === nothing && error("cannot repair the truncated URL \"$url\" for `$field`")
+    # `.../v001/SPS_0120m_h.tif` gives the directory and the `SPS_0120m` stem.
+    m = match(r"^(.*/)([A-Z]+_\d+m)_h\.tif$", dem)
+    m === nothing && error(
+        "the log's `$field` URL is truncated to \"$url\" and the DEM URL \"$dem\" does not match " *
+        "the `<tile>_<res>_h.tif` form the repair needs")
+    dir, stem = m.captures[1], m.captures[2]
+    # The surviving text must be consistent with the repair, and there are two ways it can be. Usually a
+    # prefix of the URL survives — `.../v001/SPS_0Polarization hh` keeps the directory and part of the
+    # stem — and it has to match. Sometimes nothing of the URL survives at all, because the noise
+    # replaced the whole token: the second of a pair is left as the bare `hh` of a `Polarization hh`
+    # line. That is repairable only because the field determines the raster and the *pair's* first half,
+    # repaired against the DEM, determines the tile — so the repair is accepted only when the sibling
+    # agrees, which `param_urls` arranges by repairing the pair in order.
+    want = dir * stem * "_" * name * ".tif"
+    # The surviving text has to agree with the repair as far as it goes. It is not a *prefix* of it: the
+    # noise begins mid-token, so `.../v001/SPS_0Polarization` agrees through `.../v001/SPS_0` and then
+    # diverges. What is checked is that the agreement covers the directory, which is what fixes the tile
+    # and the resolution — everything after it is the raster name the field determines. A token the noise
+    # replaced entirely, leaving the bare `hh` of a `Polarization hh` line, carries no directory and is
+    # accepted on the field alone.
+    common = 0
+    for (a, b) in zip(url, want)
+        a == b || break
+        common += 1
+    end
+    (common >= length(dir) || !occursin('/', url)) || error(
+        "the truncated `$field` URL \"$url\" agrees with the repair \"$want\" for only $common " *
+        "characters, short of the $(length(dir)) that fix the tile, so the repair would be a guess")
+    return want
+end
+
 """
     param_urls(text) -> (dem, Dict)
 
@@ -282,17 +336,21 @@ function param_urls(text::AbstractString)
 
     dem = one("DEM")
     dem === nothing && error("the log names no DEM")
+    endswith(dem, ".tif") || error(
+        "the log's DEM URL is \"$dem\", which is not a raster path — container stdout truncated it, " *
+        "and the DEM names the tile every other raster is repaired against")
     urls = Dict{String,String}("dem" => dem)
     for (label, fields) in (("Slopes", ("dhdx", "dhdy")), ("Velocities", ("vx", "vy")),
                             ("Search Range", ("srx", "sry")),
                             ("Chip Size Min", ("csminx", "csminy")),
                             ("Chip Size Max", ("csmaxx", "csmaxy")))
-        p = two(label)
-        p === nothing && continue
-        urls[fields[1]], urls[fields[2]] = p
+        pair = two(label)
+        pair === nothing && continue
+        urls[fields[1]] = repair_url(pair[1], dem, fields[1])
+        urls[fields[2]] = repair_url(pair[2], dem, fields[2])
     end
     ssm = one("Stable Surface Mask")
-    ssm === nothing || (urls["ssm"] = ssm)
+    ssm === nothing || (urls["ssm"] = repair_url(ssm, dem, "ssm"))
     return dem, urls
 end
 
