@@ -138,7 +138,10 @@ function compare_float_band(file, band, field, ours, theirs; bound::Float64,
     worst_at = nothing
     for i in eachindex(IndexCartesian(), ours)
         a, b = Float64(ours[i]), Float64(theirs[i])
-        a === b && continue
+        # `==`, not `===`: `-0.0 == 0.0` is true and `-0.0 === 0.0` is false, and the two are one
+        # number. Negating a zero produces the difference, so a bitwise comparison here would report a
+        # sign of zero as a disagreement in the value.
+        a == b && continue
         (isnan(a) && isnan(b)) && continue
         ndiff += 1
         # Non-finite on one side only is unbounded, whatever the magnitudes: a sentinel against a
@@ -156,8 +159,10 @@ function compare_float_band(file, band, field, ours, theirs; bound::Float64,
     end
     n = length(theirs)
     passed = ndiff == 0 || (bound > 0 && worst < bound)
-    detail = if ndiff == 0
-        "all $n bitwise"
+    detail = if ndiff == 0 || worst_at === nothing
+        # `worst_at` stays unset when every difference is a signed zero, which `==` treats as equal but
+        # the count above has already tallied. Reported as agreement, since the values do agree.
+        ndiff == 0 ? "all $n equal" : "all $n equal in value"
     else
         pos, a, b = worst_at
         @sprintf("%d of %d differ (%.2f%%), worst %.3g at %s: ours %.17g, reference %.17g",
