@@ -159,7 +159,7 @@ is printed on every convention rung so the masking cannot hide a difference sile
 
 | | why |
 |---|---|
-| the two NISAR pairs | no local run directory. Producing the L1 run reached the end of ISCE3 geocoding and was killed: 174 GB written, Docker capped at 31 GB of the host's 96 GB |
+| the two NISAR pairs | no local run directory. The L1 run reached the end of ISCE3 geocoding and was then `Killed` with 174 GB written; the log names no cause and none is diagnosed — see `README.md` |
 | Layer 3 on the radar runs | needs a `PairGeometry` whose clock is fitted, so a conversion difference and the clock's residual would be indistinguishable |
 | the reference's image mask | not in the capture, per Layer 2 above |
 

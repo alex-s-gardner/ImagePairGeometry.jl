@@ -186,12 +186,19 @@ entering every array the correlator receives.
 The two NISAR pairs are in the manifest and in `products/` but have no local run, so they have neither
 `window_*.tif` nor a capture.
 
-Producing the L1 run was attempted and does not fit this machine. The container reached the end of
-ISCE3 geocoding — `Topo progress (block 6/6): 100%` — and was then killed, after writing 174 GB into
-the run directory, with Docker limited to 31 GB of the host's 96 GB. So the ceiling is Docker's memory
-allocation rather than anything about the pipeline, and raising it plus roughly 200 GB of free disk is
-what the run needs. `~/.claude/jobs/*/tmp/nisar_l1_failed.log` is not durable; the failure mode is
-recorded here instead.
+Producing the L1 run was attempted and did not complete. What was observed, and nothing more: the
+container reached `Topo progress (block 6/6): 100%` — the end of ISCE3 geocoding — and the pixi process
+was then `Killed`, with 174 GB written into the run directory. The log names no cause: no `bad_alloc`,
+no `MemoryError`, no out-of-space message.
+
+**The cause is not diagnosed.** Memory is the obvious guess and the evidence does not support it: an S1
+case succeeded on the same 31 GiB Docker allocation with a 5.9 GB intermediate on a 65978 × 23857 image,
+where the NISAR geocoding blocks were 3541 × 1266, and the kill landed *after* that stage rather than
+inside an allocation. Disk is equally consistent — 174 GB had been written — and was not sampled during
+the run. Diagnosing it means rerunning with `docker stats` and `df` sampled throughout.
+
+So the honest statement is that this pair needs a rerun instrumented to say what it ran out of, not that
+it needs a larger machine.
 
 `test/radar_itslive_product.jl` cross-checks the L1 pair's `M11`/`M12` and `dr_to_vr_factor` against
 its delivered product independently, so the radar operator is not unchecked there — that test needs
