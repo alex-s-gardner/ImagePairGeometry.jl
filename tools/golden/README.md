@@ -100,13 +100,16 @@ identifies the transform rather than the kernel as the source. The coordinates t
 3.7e-15 relative for every pair the golden set uses; the one-pixel difference the unit vectors are
 built from agrees to 2.1e-11 for EPSG:3413↔32622 and only 2.7e-9 for 3413↔32607.
 
-**The radar index bands — one index on ≤ 15% of computed points.** Looser than the fixture bound, and
-the reason is the log rather than the kernel. `dr` prints as `2.32956`: six figures, so ±5e-6, which
-is 0.14 index units at the far edge of a 66,000-sample swath. The range index inherits that directly
-and cannot be bitwise while `dr` is read from the log. Measured: the range index agrees on 86.4% of
-6.7 million points and the azimuth on 97.7%, with *every* disagreement on either exactly one — a
-large count, none of it larger than one index, which is the signature of a correct solve read through
-a coarsely printed sample spacing.
+**The radar index bands — one index on ≤ 18% of computed points in range, ≤ 6% in azimuth.** Looser than
+the fixture bound, and the reason is the log rather than the kernel. `dr` prints as `2.32956`: six
+figures, so ±5e-6, which is 0.14 index units at the far edge of a 66,000-sample swath. The range index
+inherits that directly and cannot be bitwise while `dr` is read from the log.
+
+Measured over the eight runs as a fraction of the points the reference computed, range differs on
+6.73–15.06% and azimuth on 0.35–4.13%, with *every* disagreement on either exactly one. Range being
+consistently four times worse is what identifies `dr` as the dominant term rather than the clock, and
+why the two axes get separate bounds: one wide enough for range would be six times looser than azimuth
+needs and would stop saying anything about azimuth.
 
 Fitting `dr` was tried and rejected. Scanning it lifts the range agreement to a peak of 94.6%, but
 the peak sits at 2.329569, which renders as `2.32957` — outside the interval the log's own `2.32956`
@@ -181,9 +184,18 @@ entering every array the correlator receives.
 | NISAR | 2 | none — no run directory |
 
 The two NISAR pairs are in the manifest and in `products/` but have no local run, so they have neither
-`window_*.tif` nor a capture. `test/radar_itslive_product.jl` cross-checks the L1 pair's `M11`/`M12`
-and `dr_to_vr_factor` against its delivered product independently, so the radar operator is not
-unchecked there.
+`window_*.tif` nor a capture.
+
+Producing the L1 run was attempted and does not fit this machine. The container reached the end of
+ISCE3 geocoding — `Topo progress (block 6/6): 100%` — and was then killed, after writing 174 GB into
+the run directory, with Docker limited to 31 GB of the host's 96 GB. So the ceiling is Docker's memory
+allocation rather than anything about the pipeline, and raising it plus roughly 200 GB of free disk is
+what the run needs. `~/.claude/jobs/*/tmp/nisar_l1_failed.log` is not durable; the failure mode is
+recorded here instead.
+
+`test/radar_itslive_product.jl` cross-checks the L1 pair's `M11`/`M12` and `dr_to_vr_factor` against
+its delivered product independently, so the radar operator is not unchecked there — that test needs
+only the product and the parameter rasters, not a rerun of the pipeline.
 
 Layer 3 covers the optical runs only. It needs a `PairGeometry` from Layer 1, and the radar geometry is
 conditional on a solved clock — so running it there would report the clock's residual as a conversion
