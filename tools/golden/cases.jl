@@ -475,6 +475,12 @@ function goldenruns(; name = nothing)
         for sub in sort(readdir(d))
             n = tryparse(Int, sub)
             n === nothing && continue
+            # A directory is a run once geogrid has written its output. A run still in progress — or one
+            # that failed before geogrid — has a `capture.log` and no `window_location.tif`, and its log
+            # has none of the fields `goldenrun` requires. Skipped rather than parsed, so a sweep started
+            # beside a running capture reports on the runs that exist instead of failing on the one that
+            # does not yet.
+            isfile(joinpath(d, sub, "window_location.tif")) || continue
             isfile(joinpath(d, sub, "capture.log")) || continue
             push!(out, goldenrun(c, n))
         end
@@ -497,11 +503,17 @@ function coverage()
             continue
         end
         ns = sort([n for n in (tryparse(Int, s) for s in readdir(d)) if n !== nothing])
+        done = filter(n -> isfile(joinpath(d, string(n), "window_location.tif")), ns)
+        if isempty(done)
+            @printf("%-42s %-10s %-20s %s\n", short_name(c), c.platform, join(ns, ","),
+                    "no geogrid output yet")
+            continue
+        end
         # Per run, so a run with no capture reads as `0` rather than shifting the column. Only run
         # 200 carries one on several cases; the others compare geogrid output alone.
         caps = [isdir(joinpath(d, string(n), "capture")) ?
-                length(readdir(joinpath(d, string(n), "capture"))) : 0 for n in ns]
-        @printf("%-42s %-10s %-20s %s\n", short_name(c), c.platform, join(ns, ","),
+                length(readdir(joinpath(d, string(n), "capture"))) : 0 for n in done]
+        @printf("%-42s %-10s %-20s %s\n", short_name(c), c.platform, join(done, ","),
                 join(caps, ","))
     end
     return nothing
