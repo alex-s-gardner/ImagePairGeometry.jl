@@ -51,14 +51,25 @@ Base.show(io::IO, b::BandResult) =
             b.passed ? "pass" : "FAIL", b.detail)
 
 """
-    compare_int_band(file, band, field, ours, theirs) -> BandResult
+    compare_int_band(file, band, field, ours, theirs; allow_boundary = 0) -> BandResult
 
 Tier A: an integer band, bitwise or failed.
 
-No tolerance is offered, because these are the outputs of a rounding conversion — a difference of one
-is a different answer, not a rounder one.
+No tolerance on the *value*: these are the outputs of a rounding conversion, so a difference of one is
+a different answer rather than a rounder one, and a band that disagrees anywhere by more than one is a
+kernel difference whatever the count.
+
+`allow_boundary` permits that many points to differ by exactly one, for the one thing bitwise integer
+agreement cannot survive: a float that lands within the transform's own noise of a `.5` rounding
+boundary. Measured on `LC08_L1TP_062018`, `search_x` at grid point (1132, 1489) evaluates to
+`-34.499999762929185` here, 2.4e-7 below the boundary — so the reference's value need only differ by
+6.9e-9 relative, well inside the ≤2e-7 the float bands of the same case show, to round the other way.
+One point of 5,352,100.
+
+A boundary allowance is only honest when the difference is *also* one: a point rounded across a
+boundary moves by one, so anything larger is not this phenomenon and fails regardless of the count.
 """
-function compare_int_band(file, band, field, ours, theirs)
+function compare_int_band(file, band, field, ours, theirs; allow_boundary::Int = 0)
     size(ours) == size(theirs) || return BandResult(
         file, band, field, "bitwise", false, 0, 0, Inf,
         "shape $(size(ours)) against the reference's $(size(theirs))")
@@ -74,6 +85,10 @@ function compare_int_band(file, band, field, ours, theirs)
         first_bad === nothing && (first_bad = (Tuple(i), a, b))
     end
     n = length(theirs)
+    gate = allow_boundary == 0 ? "bitwise" : "bitwise ±$allow_boundary boundary"
+    # Every difference must be one, not just the worst: a scattered ±1 and one rounding boundary are
+    # different findings, and only the count distinguishes them once the magnitude is bounded.
+    passed = ndiff == 0 || (ndiff <= allow_boundary && worst == 1.0)
     detail = if ndiff == 0
         "all $n equal"
     else
@@ -81,23 +96,43 @@ function compare_int_band(file, band, field, ours, theirs)
         @sprintf("%d of %d differ (%.4f%%), worst by %.0f, first at %s: ours %d, reference %d",
                  ndiff, n, 100 * ndiff / n, worst, pos, a, b)
     end
-    return BandResult(file, band, field, "bitwise", ndiff == 0, n, ndiff, worst, detail)
+    return BandResult(file, band, field, gate, passed, n, ndiff, worst, detail)
 end
 
 """
-    compare_float_band(file, band, field, ours, theirs; bound) -> BandResult
+    compare_float_band(file, band, field, ours, theirs; bound, scale = nothing) -> BandResult
 
-Tier B: a float band, bitwise when `bound` is zero and within `bound` relative otherwise.
+Tier B: a float band, bitwise when `bound` is zero and within `bound` otherwise.
 
 `bound` is the caller's claim about the case, not a property of the band: pass `0.0` where the grid and
 the image share a CRS, so no reprojection has happened and bitwise is achievable.
+
+`scale` chooses what `bound` is relative *to*. By default each value is normalized by its own
+magnitude, `max(|a|, |b|, 1)`, which is the right measure for a quantity whose error grows with it.
+Passing a number normalizes by that instead, which is what the off2vel bands need: the four components
+of one operator span two orders of magnitude — `off2vy_dx` is around 342 where `off2vy_dy` is around 1
+on the same grid point — because the image axes are nearly perpendicular to the grid's. They are one
+matrix computed from one pair of unit vectors, so an absolute error in those vectors is shared, and
+normalizing each component by itself reports the small component as three hundred times worse than its
+sibling for no reason in the arithmetic. Normalizing the whole operator by its largest component
+reports the error the operator actually carries.
+
+Measured: on `LC08_L1TP_060018` the two components differ from the reference by 4.3e-6 and 4.3e-9
+absolute, which self-normalized reads 4.2e-6 and 1.3e-11 — a spread of five orders on one operator.
 """
-function compare_float_band(file, band, field, ours, theirs; bound::Float64)
+function compare_float_band(file, band, field, ours, theirs; bound::Float64,
+                            scale::Union{Float64,Nothing} = nothing)
     size(ours) == size(theirs) || return BandResult(
         file, band, field, "shape", false, 0, 0, Inf,
         "shape $(size(ours)) against the reference's $(size(theirs))")
 
-    gate = bound == 0 ? "bitwise" : @sprintf("relative < %.0e", bound)
+    gate = if bound == 0
+        "bitwise"
+    elseif scale === nothing
+        @sprintf("relative < %.0e", bound)
+    else
+        @sprintf("op-relative < %.0e", bound)
+    end
     ndiff = 0
     worst = 0.0
     worst_at = nothing
@@ -108,7 +143,12 @@ function compare_float_band(file, band, field, ours, theirs; bound::Float64)
         ndiff += 1
         # Non-finite on one side only is unbounded, whatever the magnitudes: a sentinel against a
         # computed value is a coverage difference and must not be absorbed by a relative measure.
-        rel = (isfinite(a) && isfinite(b)) ? abs(a - b) / max(abs(a), abs(b), 1.0) : Inf
+        rel = if !(isfinite(a) && isfinite(b))
+            Inf
+        else
+            denom = scale === nothing ? max(abs(a), abs(b), 1.0) : scale
+            abs(a - b) / denom
+        end
         if rel > worst
             worst = rel
             worst_at = (Tuple(i), a, b)
@@ -120,14 +160,14 @@ function compare_float_band(file, band, field, ours, theirs; bound::Float64)
         "all $n bitwise"
     else
         pos, a, b = worst_at
-        @sprintf("%d of %d differ (%.2f%%), worst relative %.3g at %s: ours %.17g, reference %.17g",
+        @sprintf("%d of %d differ (%.2f%%), worst %.3g at %s: ours %.17g, reference %.17g",
                  ndiff, n, 100 * ndiff / n, worst, pos, a, b)
     end
     return BandResult(file, band, field, gate, passed, n, ndiff, worst, detail)
 end
 
 """
-    compare_geometry(r::GoldenRun, result; float_bound) -> Vector{BandResult}
+    compare_geometry(r::GoldenRun, result; float_bound, allow_boundary = 0) -> Vector{BandResult}
 
 Every band of `result` against the nine GeoTIFFs run `r` produced.
 
@@ -139,7 +179,8 @@ A file the reference did not write is reported rather than skipped: it writes no
 inputs did not support, so its absence is a claim about the inputs that this package's own output must
 match.
 """
-function compare_geometry(r::GoldenRun, result; float_bound::Float64)
+function compare_geometry(r::GoldenRun, result; float_bound::Float64,
+                          allow_boundary::Int = 0)
     out = BandResult[]
     for (file, fields) in reference_files(result.coordinate)
         path = joinpath(r.dir, file)
@@ -163,17 +204,44 @@ function compare_geometry(r::GoldenRun, result; float_bound::Float64)
             nb == length(fields) || error(
                 "$file has $nb bands but the $(typeof(result.coordinate).name.name) layout " *
                 "expects $(length(fields)); a positional reader would misread every band")
+            # GDAL hands back (x, y), which is the orientation this package's arrays use.
+            theirs = [ArchGDAL.read(ds, b) for b in 1:nb]
+            # The two off2vel files each hold one operator, whose components share the unit vectors
+            # they are computed from — so they share a normalization. Taken from the reference's own
+            # bands, and from the largest magnitude across the file rather than per band.
+            scale = _operator_scale(file, theirs, result)
             for (b, f) in enumerate(fields)
-                # GDAL hands back (x, y), which is the orientation this package's arrays use.
-                theirs = ArchGDAL.read(ds, b)
                 ours = getfield(result, f)
                 push!(out, eltype(ours) <: Integer ?
-                           compare_int_band(file, b, f, ours, theirs) :
-                           compare_float_band(file, b, f, ours, theirs; bound = float_bound))
+                           compare_int_band(file, b, f, ours, theirs[b]; allow_boundary) :
+                           compare_float_band(file, b, f, ours, theirs[b];
+                                              bound = float_bound, scale))
             end
         end
     end
     return out
+end
+
+# The normalization shared by the components of one displacement-to-velocity operator, or `nothing`
+# for a file that is not one.
+#
+# Only the two off2vel files hold an operator. `window_scale_factor` holds two independent ratios, both
+# near 1, and `window_location` and the rest are integers — for those, each value's own magnitude is the
+# right measure and `compare_float_band`'s default applies.
+#
+# The scale is the largest magnitude the *reference* wrote across the file's bands, so it does not
+# depend on this package's own output. Sentinels are excluded: `-32767` exceeds every real component and
+# would set the scale for the whole grid.
+function _operator_scale(file, theirs, result)
+    occursin("off2vel", file) || return nothing
+    sentinel = Float64(result.nodata.output)
+    m = 0.0
+    for band in theirs, v in band
+        x = Float64(v)
+        (x == sentinel || !isfinite(x)) && continue
+        m = max(m, abs(x))
+    end
+    return m > 0 ? m : nothing
 end
 
 """

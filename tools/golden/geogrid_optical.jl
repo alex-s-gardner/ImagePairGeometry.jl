@@ -37,11 +37,30 @@ RASTERS_EXT === nothing && error("the Rasters extension did not load; `RasterInp
 using .RASTERS_EXT: RasterInputs
 
 """
-Largest relative difference tolerated on a float band where the grid and the image are in different
-CRSs. `test/geogrid.jl`'s bound, for the two reasons `REFERENCE.md` records under Tier B: the
-reference's floating-point contraction, and PROJ's lack of cross-platform bit reproducibility. Set far
-above the measured worst case and far below anything that could matter — these bands convert a pixel
-displacement to a velocity, so this is nanometers per year against values in meters per year.
+Largest difference tolerated on a float band where the grid and the image are in different CRSs —
+relative to the value for the scale factors, and to the operator's own magnitude for the off2vel
+components, per [`compare_float_band`](@ref).
+
+`test/geogrid.jl`'s bound, and it holds on production data at the same value. The difference it
+tolerates comes from the transform, not the kernel, and its size is a measured property of two things
+the kernel composes.
+
+The kernel builds each axis unit vector from the *difference* of two inverse-transformed coordinates one
+pixel apart, so an error in the transform is amplified by `|x| / spacing` — around 1e5 at ITS_LIVE
+scale. FastGeoProjections and PROJ agree on the *coordinates* to 3.7e-15 relative for every pair the
+golden set uses, but on that one-pixel difference only to 2.1e-11 for EPSG:3413↔32622 and 2.7e-9 for
+3413↔32607.
+
+`off2vy_dy` then divides by `xunit[1]`, which is near zero wherever the image axes are nearly
+perpendicular to the grid's — so the same absolute error reads `1/|xunit[1]|` times larger. Measured
+across three cases: `xunit[1]` of 0.99, 0.10 and 0.003 give 1×, 9.6× and 332× amplification, matching
+the observed 1e-9, 1.3e-7 and 4.2e-6 self-normalized differences. Substituting PROJ for
+FastGeoProjections drops the band to exactly zero at most points, which is what identifies the
+transform as the source.
+
+Normalizing each operator by its own largest component reports one error for one operator instead of
+that spread, which is why this bound needs no widening for production data. Every integer band is
+bitwise across all 18 optical runs regardless.
 """
 const FLOAT_REL_BOUND = 1e-7
 
@@ -128,17 +147,23 @@ A raster's EPSG code from the cached `gdalinfo -json` header [`cached_gdal_geome
 """
 function cached_gdal_epsg(url::AbstractString)
     cached_gdal_geometry(url)      # ensures the header is cached
-    dir = joinpath(PARAMS_CACHE, "headers")
-    key = bytes2hex(codeunits(url))[1:min(end, 32)] * "_" * basename(url) * ".json"
-    info = JSON3.read(read(joinpath(dir, key), String))
-    # GDAL's JSON puts the code in the CRS's last authority entry.
-    m = match(r"\"ID\"\s*:\s*\[\s*\"EPSG\"\s*,\s*(\d+)\s*\]\s*\}\s*$",
-              strip(JSON3.write(info.coordinateSystem)))
-    m === nothing || return parse(Int, m.captures[1])
-    ms = collect(eachmatch(r"\"EPSG\"\s*,\s*(\d+)", JSON3.write(info.coordinateSystem)))
-    isempty(ms) && error("the cached header for $url names no EPSG code")
-    return parse(Int, last(ms).captures[1])
+    info = JSON3.read(read(header_cache_path(url), String))
+    # `gdalinfo -json` reports the code under `stac`, alongside a full WKT that also carries it as its
+    # outermost authority ID. Reading the field rather than the WKT: an authority ID appears on the
+    # datum and on each axis too, so picking one out of the text means picking the right one.
+    (haskey(info, :stac) && haskey(info.stac, :var"proj:epsg")) || error(
+        "the cached header for $url carries no `stac.proj:epsg`; GDAL reports it for any raster " *
+        "whose CRS it recognizes, so this file's projection is not one it resolved")
+    return Int(info.stac[:var"proj:epsg"])
 end
+
+"""
+Points per integer band allowed to differ by exactly one because the float behind them lands within
+the transform's noise of a `.5` rounding boundary. See [`compare_int_band`](@ref) for the measurement;
+one such point exists across all 18 optical runs, so this is a bound of the same order rather than a
+budget anything is expected to fill.
+"""
+const BOUNDARY_POINTS = 4
 
 """
     check_optical(r::GoldenRun; ntasks) -> Vector{BandResult}
@@ -149,13 +174,12 @@ function check_optical(r::GoldenRun; ntasks::Integer = max(1, Threads.nthreads()
     r.radar && throw(ArgumentError("$(short_name(r)) run $(r.run) is a radar case; " *
                                    "use geogrid_radar.jl"))
     result = geogrid_result(r; ntasks)
-    coord = result.coordinate
-    # Bitwise is achievable only when no reprojection happens. Every golden case reprojects, since the
-    # parameter grids are polar stereographic and the imagery is UTM.
+    # Bitwise floats are achievable only where no reprojection happens, and a boundary allowance is
+    # needed only where one does — the same condition, since both are consequences of the transform.
     same_crs = r.epsg == image_crs(r)
-    bound = same_crs ? 0.0 : FLOAT_REL_BOUND
-
-    rs = compare_geometry(r, result; float_bound = bound)
+    rs = compare_geometry(r, result;
+                          float_bound = same_crs ? 0.0 : FLOAT_REL_BOUND,
+                          allow_boundary = same_crs ? 0 : BOUNDARY_POINTS)
     pushfirst!(rs, compare_coverage(r, result))
     return rs
 end

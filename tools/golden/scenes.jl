@@ -321,6 +321,18 @@ footprint(g::SceneGeometry) =
     ImageFootprint(origin = g.origin, spacing = g.spacing, size = g.size)
 
 """
+    header_cache_path(url) -> String
+
+Where the cached `gdalinfo -json` header of `url` lives.
+
+Keyed by a hash of the whole URL as well as the basename, since two Sentinel-2 tiles of different
+MGRS squares can share a filename pattern while differing earlier in the path.
+"""
+header_cache_path(url::AbstractString) =
+    joinpath(PARAMS_CACHE, "headers",
+             bytes2hex(codeunits(url))[1:min(end, 32)] * "_" * basename(url) * ".json")
+
+"""
     cached_gdal_geometry(url) -> SceneGeometry
 
 [`gdal_geometry`](@ref) through a cached local copy of the header, for a raster ArchGDAL's own GDAL
@@ -335,11 +347,9 @@ Only the header is fetched, not the image: `gdalinfo` reads the JP2 codestream h
 range requests, not the 10980² samples.
 """
 function cached_gdal_geometry(url::AbstractString)
-    dir = joinpath(PARAMS_CACHE, "headers")
-    key = bytes2hex(codeunits(url))[1:min(end, 32)] * "_" * basename(url) * ".json"
-    path = joinpath(dir, key)
+    path = header_cache_path(url)
     if !isfile(path)
-        mkpath(dir)
+        mkpath(dirname(path))
         # `-nomd -norat` keeps the JSON to the geometry; the metadata of an S2 tile is large and
         # nothing here reads it.
         out = read(`gdalinfo -json -nomd -norat $url`, String)
