@@ -184,18 +184,24 @@ chip size and stable surface and `32767` for search range, all of which are ordi
 Windows are indexed in grid coordinates, so the rasters must cover the whole grid, not just the
 window — which is the usual case, since the DEM is what defines the grid.
 """
-struct RasterInputs{D,S,V,R,Cn,Cx,M} <: AbstractInputSource
+#
+# One type parameter per raster, not one per pair. The x and y halves of a pair are separate files and
+# need not be the same type: `AREA_OR_POINT` is per file, and Rasters encodes it in the lookup's type,
+# so a pair that disagrees about it has two different `Raster` types. The published ITS_LIVE parameter
+# rasters do disagree — `SPS_0120m_vx0.tif` declares `Area` where `SPS_0120m_vy0.tif` declares `Point`
+# — so sharing a parameter across a pair rejects the real inputs with a `MethodError`.
+struct RasterInputs{D,Sx,Sy,Vx,Vy,Rx,Ry,Cnx,Cny,Cxx,Cxy,M} <: AbstractInputSource
     dem::D
-    dhdx::S
-    dhdy::S
-    vx::V
-    vy::V
-    srx::R
-    sry::R
-    csminx::Cn
-    csminy::Cn
-    csmaxx::Cx
-    csmaxy::Cx
+    dhdx::Sx
+    dhdy::Sy
+    vx::Vx
+    vy::Vy
+    srx::Rx
+    sry::Ry
+    csminx::Cnx
+    csminy::Cny
+    csmaxx::Cxx
+    csmaxy::Cxy
     ssm::M
 end
 
