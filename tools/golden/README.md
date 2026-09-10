@@ -40,6 +40,17 @@ pass is a difference in `AutoRIFT.pointset`.
 
 ## Results
 
+One sweep of `run_all.jl`: **1,090 of 1,090** band and rung verdicts pass, across 70 run-comparisons
+and all five layers.
+
+| layer | runs | verdicts |
+|---|---|---|
+| 0 self-gate | — | 290 assertions, 8 injected differences each caught |
+| 1 optical | 18 | 18 bands each |
+| 1 radar | 8 | 21 bands each |
+| 2 handoff | 26 | 14 rungs each |
+| 3 pointset | 18 | 13 rungs each |
+
 Optical, all 18 runs, every band within its gate:
 
 | | |
