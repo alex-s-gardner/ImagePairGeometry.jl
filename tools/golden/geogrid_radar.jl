@@ -383,13 +383,27 @@ Fitting `dr` was tried and rejected. Scanning it lifts the range agreement from 
 `2.32956` admits. A fitted value that contradicts the printed one is absorbing some other error, so it
 is not a refinement and the printed value stands.
 
-So the bound is set at 15% of the computed points, which is what this evidence establishes: the range
-index agrees on 86.4% of 6.7 million points and the azimuth on 97.7%, with *every* disagreement on
-either exactly one. That combination — a large count, none of it larger than one index — is the
-signature of a correct solve read through a coarsely printed sample spacing, and it is what the gate
-checks. Tightening it needs `dr` to more digits, which means the SAFE annotation rather than the log.
+So the bounds are set from this evidence, separately per axis, because the two differ by a factor of
+four in a way the `dr` argument predicts. Measured over all eight runs, as a fraction of the points the
+reference computed:
+
+| band | range across the eight runs |
+|---|---|
+| `location_x` (range) | 6.73% … 15.06% |
+| `location_y` (azimuth) | 0.35% … 4.13% |
+
+Range is consistently the worse of the two, which is what identifies `dr` rather than the clock as the
+dominant term: the azimuth index is fixed against the reference's own output and still carries the
+0.0013-line residual, while the range index carries a sample spacing known only to six figures over a
+swath 66,000 samples wide.
+
+*Every* disagreement on either band is exactly one index. That combination — a large count, none of it
+larger than one — is the signature of a correct solve read through coarsely printed parameters, and it
+is what the gate checks alongside the count. Tightening either needs the SAFE annotation rather than
+the log.
 """
-const RADAR_INDEX_FRACTION = 0.15
+const RADAR_RANGE_FRACTION = 0.18
+const RADAR_AZIMUTH_FRACTION = 0.06
 
 """
     radar_result(r::GoldenRun, sensing_start; ntasks) -> PairGeometry
@@ -442,7 +456,8 @@ function check_radar(r::GoldenRun; ntasks::Integer = max(1, Threads.nthreads()))
     # of the points the reference *computed*, not of the grid: most of a radar scene's grid is outside
     # the swath, and a fraction of the whole would be an allowance many times the documented reach.
     ncomputed = count(!=(Int32(r.nodata)), result.location_x)
-    index_allow = ceil(Int, RADAR_INDEX_FRACTION * ncomputed)
+    range_allow = ceil(Int, RADAR_RANGE_FRACTION * ncomputed)
+    azimuth_allow = ceil(Int, RADAR_AZIMUTH_FRACTION * ncomputed)
     for (file, fields) in reference_files(result.coordinate)
         path = joinpath(r.dir, file)
         isfile(path) || continue
@@ -452,10 +467,16 @@ function check_radar(r::GoldenRun; ntasks::Integer = max(1, Threads.nthreads()))
             for (b, f) in enumerate(fields)
                 ours = getfield(result, f)
                 if eltype(ours) <: Integer
-                    # Both index bands and the extents derived from them; the chip sizes and the mask
-                    # come from the parameter rasters rather than the solve and are held bitwise.
-                    allow = f in (:location_x, :location_y, :offset_x, :offset_y,
-                                  :search_x, :search_y) ? index_allow : 0
+                    # Both index bands and the extents derived from them, at the axis's own bound; the
+                    # chip sizes and the mask come from the parameter rasters rather than the solve and
+                    # are held bitwise.
+                    allow = if f in (:location_x, :offset_x, :search_x)
+                        range_allow
+                    elseif f in (:location_y, :offset_y, :search_y)
+                        azimuth_allow
+                    else
+                        0
+                    end
                     push!(out, compare_int_band(file, b, f, ours, theirs[b];
                                                 allow_boundary = allow,
                                                 sentinel = Int(r.nodata)))
