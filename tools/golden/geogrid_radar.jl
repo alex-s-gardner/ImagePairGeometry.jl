@@ -335,6 +335,198 @@ function main_clock(args)
     return allok
 end
 
+
+
+# ---------------------------------------------------------------------------
+# The bands
+# ---------------------------------------------------------------------------
+
+"""
+Bounds for the radar float bands, from `REFERENCE.md`'s real-data table.
+
+Three groups, because they divide by different things and inherit different amounts of the azimuth
+residual:
+
+  * bands dividing by the range sample spacing (`off2v*_dx`) inherit none of it;
+  * the scale factors inherit a little;
+  * bands dividing by the along-track step (`off2vx_dy`, `off2vy_dy`, `off2v*_dr`) inherit it directly,
+    because that step is measured between two solved ground points.
+
+The along-track bound is the loosest for exactly that reason. `REFERENCE.md` measures the reference's
+own `da` error at 1.07e-4 maximum relative and attributes the band error to it to five digits, so this
+is a property of the reference's azimuth time rather than slack in the kernel.
+"""
+const RADAR_BOUNDS = Dict(:off2vx_dx => 1e-6, :off2vy_dx => 1e-6,
+                          :scale_x => 1e-7, :scale_y => 1e-6,
+                          :off2vx_dy => 1e-3, :off2vy_dy => 1e-3,
+                          :off2vx_dr => 1e-3, :off2vy_dr => 1e-3)
+
+"""
+Points per index band allowed to differ by one on the radar path, as a fraction of the points the
+reference computed.
+
+Applied to `location_x` and `location_y` and to the extents derived from them. Both indices come from
+the same range-Doppler solve, so both carry the gap between the compiled kernel's floating-point history
+and any external reproduction of it — the ~0.0013-line azimuth offset `REFERENCE.md` documents, and its
+range counterpart. Every point whose unrounded index lands within that distance of a `std::round`
+boundary rounds the other way.
+
+Set from measurement on this data rather than from the fixture bound. `REFERENCE.md` reports the
+azimuth reach as ≤ 0.3% of points against a reference this repository runs itself, with the range index
+bitwise. Neither holds against a delivered product, and the reason is the log rather than the kernel:
+`dr` prints as `2.32956` — six figures, so ±5e-6, which is 0.14 index units at the far edge of a 66,000
+sample swath. The range index inherits that directly and cannot be bitwise while `dr` is read from the
+log.
+
+Fitting `dr` was tried and rejected. Scanning it lifts the range agreement from 86.0% to a peak of
+94.6%, but the peak sits at 2.329569, which renders as `2.32957` — outside the interval the log's own
+`2.32956` admits. A fitted value that contradicts the printed one is absorbing some other error, so it
+is not a refinement and the printed value stands.
+
+So the bound is set at 15% of the computed points, which is what this evidence establishes: the range
+index agrees on 86.4% of 6.7 million points and the azimuth on 97.7%, with *every* disagreement on
+either exactly one. That combination — a large count, none of it larger than one index — is the
+signature of a correct solve read through a coarsely printed sample spacing, and it is what the gate
+checks. Tightening it needs `dr` to more digits, which means the SAFE annotation rather than the log.
+"""
+const RADAR_INDEX_FRACTION = 0.15
+
+"""
+    radar_result(r::GoldenRun, sensing_start; ntasks) -> PairGeometry
+
+Run `r`'s geometry at the given clock, over the run's own window and inputs.
+"""
+function radar_result(r::GoldenRun, sensing_start::Real;
+                      ntasks::Integer = max(1, Threads.nthreads()))
+    paths = fetch_params(r)
+    check_params(r, paths)
+
+    dem = Raster(paths["dem"]; lazy = true, missingval = nothing)
+    ff = mapgrid(dem)
+    grid = MapGrid(geotransform = ff.geotransform, size = ff.size, crs = r.epsg)
+    coord = radar_coordinate(r, sensing_start)
+    # `testGeogrid.py:427-470` takes every radar parameter from image 1 and the secondary only for the
+    # interval, so the pair is the reference coordinate plus `dt`. There is no radar `coregister`.
+    pair = CoregisteredPair(coord; dt = r.dt)
+
+    win = CartesianIndices((1:ff.size[1], 1:ff.size[2]))
+    lazy(f) = haskey(paths, f) ? Raster(paths[f]; lazy = true, missingval = nothing) : nothing
+    src = RasterInputs(dem = dem, dhdx = lazy("dhdx"), dhdy = lazy("dhdy"),
+                       vx = lazy("vx"), vy = lazy("vy"), srx = lazy("srx"), sry = lazy("sry"),
+                       csminx = lazy("csminx"), csminy = lazy("csminy"),
+                       csmaxx = lazy("csmaxx"), csmaxy = lazy("csmaxy"), ssm = lazy("ssm"))
+
+    return pairgeometry_blocked(grid, pair, src;
+                                transform = () -> fast_transform(r.epsg, 4326),
+                                window = win, ntasks,
+                                params = GeometryParams(chip_size_0 = r.chip_size_0),
+                                nodata = nodata_from(r.nodata))
+end
+
+"""
+    check_radar(r::GoldenRun; ntasks) -> (Vector{BandResult}, ClockSolution)
+
+Run `r`'s geogrid output against this package's, at the clock its own azimuth indices determine.
+
+Returns the clock alongside the bands, because the bands are conditional on it: a run whose clock is not
+determined gets no band comparison, since the azimuth index would then be reporting the scan's failure.
+"""
+function check_radar(r::GoldenRun; ntasks::Integer = max(1, Threads.nthreads()))
+    clock = solve_sensing_start(r)
+    clock.unique || return (BandResult[], clock)
+
+    result = radar_result(r, clock.sensing_start; ntasks)
+    out = BandResult[]
+
+    # The azimuth-derived integer bands carry the residual; the rest do not. The allowance is a fraction
+    # of the points the reference *computed*, not of the grid: most of a radar scene's grid is outside
+    # the swath, and a fraction of the whole would be an allowance many times the documented reach.
+    ncomputed = count(!=(Int32(r.nodata)), result.location_x)
+    index_allow = ceil(Int, RADAR_INDEX_FRACTION * ncomputed)
+    for (file, fields) in reference_files(result.coordinate)
+        path = joinpath(r.dir, file)
+        isfile(path) || continue
+        ArchGDAL.read(path) do ds
+            theirs = [ArchGDAL.read(ds, b) for b in 1:ArchGDAL.nraster(ds)]
+            scale = _operator_scale(file, theirs, result)
+            for (b, f) in enumerate(fields)
+                ours = getfield(result, f)
+                if eltype(ours) <: Integer
+                    # Both index bands and the extents derived from them; the chip sizes and the mask
+                    # come from the parameter rasters rather than the solve and are held bitwise.
+                    allow = f in (:location_x, :location_y, :offset_x, :offset_y,
+                                  :search_x, :search_y) ? index_allow : 0
+                    push!(out, compare_int_band(file, b, f, ours, theirs[b];
+                                                allow_boundary = allow,
+                                                sentinel = Int(r.nodata)))
+                else
+                    push!(out, compare_float_band(file, b, f, ours, theirs[b];
+                                                  bound = RADAR_BOUNDS[f], scale,
+                                                  sentinel = r.nodata))
+                end
+            end
+        end
+    end
+    # Coverage, with the same allowance the index bands get and for the same reason: a grid point whose
+    # index lands within the six-figure noise of the image's own edge is in the swath on one side and out
+    # of it on the other. Measured at 14 points of 6,678,195 on `S1A_IW_SLC__1SSH_20151120` — four orders
+    # below the bound, so this is a statement that the footprint agrees rather than a tolerance doing work.
+    cov = compare_coverage(r, result)
+    pushfirst!(out, BandResult(cov.file, cov.band, cov.field, "counts within one part in 10,000",
+                               cov.ndiff <= max(4, ceil(Int, 1e-4 * ncomputed)), cov.n, cov.ndiff,
+                               cov.worst, cov.detail))
+
+    # The scene-center incidence angle the log prints, against the one `incidence_angle` computes from
+    # the same geometry. Printed to six figures, so that is the comparison's precision — and it is an
+    # independent check on the orbit, the range and the clock all at once, since all three feed it.
+    ours_inc = rad2deg(result.coordinate.incidence_angle)
+    theirs_inc = r.radar_params.incidence_deg
+    # One printed digit of tolerance, not zero. The log's value is itself rounded to six figures, and the
+    # angle is computed from `starting_range` and `dr` — both read from that same six-figure printing —
+    # so the last digit cannot be expected to agree. A whole unit in it is 1e-4 degrees, which at this
+    # scene's slant range is millimetres of ground position, and a real error in the orbit or the range
+    # would move the angle by far more than one digit.
+    inc_ok = abs(ours_inc - theirs_inc) <= 1.5e-4
+    push!(out, BandResult("incidence angle", 1, :incidence, "within one printed digit", inc_ok, 1,
+                          inc_ok ? 0 : 1, abs(ours_inc - theirs_inc),
+                          @sprintf("ours %.6g against the log's %.6g, differing by %.1e deg",
+                                   ours_inc, theirs_inc, abs(ours_inc - theirs_inc))))
+    return (out, clock)
+end
+
+"""
+    main_radar(args) -> Bool
+
+Compare every radar run named by `args`, or solve the clocks alone with `--clock`.
+"""
+function main_radar(args)
+    "--clock" in args && return main_clock(args)
+    name = nothing
+    for a in args
+        startswith(a, "--") || (name = a)
+    end
+    runs = filter(r -> r.radar, goldenruns(; name))
+    isempty(runs) && error("no radar golden run on disk" *
+                           (name === nothing ? "" : " matching \"$name\""))
+    allok = true
+    for r in runs
+        rs, clock = check_radar(r)
+        if isempty(rs)
+            @printf("\n=== %s run %d  — clock not determined (%d of %d at %+.3f lines)\n",
+                    short_name(r), r.run, clock.matched, clock.total, clock.lines)
+            allok = false
+            continue
+        end
+        @printf("\n=== %s run %d  [EPSG %d, clock %+.3f lines from the log, %d of %d]\n",
+                short_name(r), r.run, r.epsg, clock.lines, clock.matched, clock.total)
+        allok &= report(rs)
+    end
+    println()
+    println(allok ? "every band of every radar run agrees within its gate" :
+            "at least one band is outside its gate")
+    return allok
+end
+
 if abspath(PROGRAM_FILE) == @__FILE__
-    exit(main_clock(ARGS) ? 0 : 1)
+    exit(main_radar(ARGS) ? 0 : 1)
 end

@@ -69,7 +69,8 @@ One point of 5,352,100.
 A boundary allowance is only honest when the difference is *also* one: a point rounded across a
 boundary moves by one, so anything larger is not this phenomenon and fails regardless of the count.
 """
-function compare_int_band(file, band, field, ours, theirs; allow_boundary::Int = 0)
+function compare_int_band(file, band, field, ours, theirs; allow_boundary::Int = 0,
+                          sentinel::Union{Int,Nothing} = nothing)
     size(ours) == size(theirs) || return BandResult(
         file, band, field, "bitwise", false, 0, 0, Inf,
         "shape $(size(ours)) against the reference's $(size(theirs))")
@@ -77,14 +78,24 @@ function compare_int_band(file, band, field, ours, theirs; allow_boundary::Int =
     ndiff = 0
     first_bad = nothing
     worst = 0.0
+    n = 0
     for i in eachindex(IndexCartesian(), ours)
         a, b = Int64(ours[i]), Int64(theirs[i])
+        # One side holding the sentinel and the other a value is a coverage difference, counted by
+        # `compare_coverage` rather than measured here: the magnitude of `value - (-32767)` says nothing
+        # about the kernel, and it would set `worst` for the whole band. Excluded from `n` as well, so the
+        # reported count is out of the points actually compared.
+        if sentinel !== nothing && (a == sentinel || b == sentinel)
+            a == b && (n += 1)
+            continue
+        end
+        n += 1
         a == b && continue
         ndiff += 1
         worst = max(worst, Float64(abs(a - b)))
         first_bad === nothing && (first_bad = (Tuple(i), a, b))
     end
-    n = length(theirs)
+    sentinel === nothing && (n = length(theirs))
     gate = allow_boundary == 0 ? "bitwise" : "bitwise ±$allow_boundary boundary"
     # Every difference must be one, not just the worst: a scattered ±1 and one rounding boundary are
     # different findings, and only the count distinguishes them once the magnitude is bounded.
@@ -121,7 +132,8 @@ Measured: on `LC08_L1TP_060018` the two components differ from the reference by 
 absolute, which self-normalized reads 4.2e-6 and 1.3e-11 — a spread of five orders on one operator.
 """
 function compare_float_band(file, band, field, ours, theirs; bound::Float64,
-                            scale::Union{Float64,Nothing} = nothing)
+                            scale::Union{Float64,Nothing} = nothing,
+                            sentinel::Union{Float64,Nothing} = nothing)
     size(ours) == size(theirs) || return BandResult(
         file, band, field, "shape", false, 0, 0, Inf,
         "shape $(size(ours)) against the reference's $(size(theirs))")
@@ -143,6 +155,14 @@ function compare_float_band(file, band, field, ours, theirs; bound::Float64,
         # sign of zero as a disagreement in the value.
         a == b && continue
         (isnan(a) && isnan(b)) && continue
+        # One side holding the sentinel and the other a value is a coverage difference, not a value one,
+        # and a relative measure against `-32767` says nothing about either. Where `sentinel` is given,
+        # such a point is excluded here and `compare_coverage` counts it instead — on the radar path that
+        # is 50 points of 11.6 million, against a bound the float bands would otherwise report as 11.1.
+        # A sentinel on *both* sides compares equal and never reaches this line.
+        if sentinel !== nothing && (a == sentinel || b == sentinel)
+            continue
+        end
         ndiff += 1
         # Non-finite on one side only is unbounded, whatever the magnitudes: a sentinel against a
         # computed value is a coverage difference and must not be absorbed by a relative measure.
