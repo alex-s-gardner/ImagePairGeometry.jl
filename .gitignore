@@ -7,3 +7,5 @@
 /test/Manifest*.toml
 .DS_Store
 /benchmark/Manifest*.toml
+/tools/golden/Manifest*.toml
+/tools/golden/results/
