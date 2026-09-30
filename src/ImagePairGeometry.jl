@@ -86,6 +86,7 @@ export InterpolatedTransform, CoordLattice, build_lattice, latticesize
 export LatticeInterpolation, NearestNode, Bilinear, Bicubic
 export fast_transform, FastTransform
 export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
+export parameter_info, parameter_grid, parameter_window, geometry_inputs
 
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
@@ -165,5 +166,38 @@ function blocksize_from_chunks end
 Write a result as the reference's nine GeoTIFFs. Defined when `Rasters` is loaded.
 """
 function write_geotiffs end
+
+"""
+    parameter_info(lon, lat) -> NamedTuple
+
+The ITS_LIVE parameter region covering `(lon, lat)`: its `name`, output `epsg`, and one path per
+parameter raster (`dem`, `dhdx`, `dhdy`, `vx`, `vy`, `srx`, `sry`, `csminx`, `csminy`, `csmaxx`,
+`csmaxy`, `ssm`). Defined when `ArchGDAL` is loaded.
+"""
+function parameter_info end
+
+"""
+    parameter_grid(info) -> MapGrid
+
+The output grid of an ITS_LIVE parameter region from [`parameter_info`](@ref) — the grid of its DEM
+raster. Defined when `ArchGDAL` is loaded.
+"""
+function parameter_grid end
+
+"""
+    parameter_window(path, window::CartesianIndices{2}) -> Matrix{Float64}
+
+One parameter raster from [`parameter_info`](@ref), read over `window`. Defined when `ArchGDAL` is
+loaded.
+"""
+function parameter_window end
+
+"""
+    geometry_inputs(info, window::CartesianIndices{2}) -> GeometryInputs
+
+Every parameter raster [`parameter_info`](@ref) names, read over `window`, as a
+[`GeometryInputs`](@ref) ready for [`pairgeometry`](@ref). Defined when `ArchGDAL` is loaded.
+"""
+function geometry_inputs end
 
 end

@@ -456,6 +456,36 @@ end
     end
 end
 
+@testset "the x and y halves of a pair need not be the same type" begin
+    # `AREA_OR_POINT` is per file, and Rasters encodes it in the lookup's type, so two rasters that
+    # disagree about it have different `Raster` types. The published ITS_LIVE parameter rasters
+    # disagree: `SPS_0120m_vx0.tif` declares `Area` where `SPS_0120m_vy0.tif` declares `Point`. A
+    # `RasterInputs` sharing one type parameter across a pair rejects those with a `MethodError`,
+    # which is a refusal to read the real inputs rather than a statement about them.
+    mktempdir() do dir
+        _, paths = raster_case(dir)
+        # `Points` against the `Intervals(Start())` every other input here carries.
+        pointy = joinpath(dir, "points.tif")
+        Rasters.write(pointy, Raster(fill(1.0, NGRID, NGRID),
+                                     (X(range(GT[1]; step = GT[2], length = NGRID)),
+                                      Y(range(GT[4]; step = GT[6], length = NGRID)));
+                                     crs = Rasters.EPSG(EPSG)); force = true)
+
+        interval = load(paths["vx"])
+        points = load(pointy)
+        @test typeof(interval) != typeof(points)
+
+        src = RasterInputs(dem = load(paths["dem"]),
+                           dhdx = load(paths["dhdx"]), dhdy = load(paths["dhdy"]),
+                           vx = interval, vy = points)
+        # Both halves reach the kernel as the values on disk, whichever lookup each carries.
+        block = CartesianIndices((1:4, 1:4))
+        inputs = ImagePairGeometry.readblock(src, block)
+        @test inputs.vx == Float64.(interval[block.indices...])
+        @test inputs.vy == Float64.(points[block.indices...])
+    end
+end
+
 @testset "the geotransform survives a round-trip in both axis directions" begin
     # `Intervals{Start}` names the *low* edge of a cell in coordinate order, so on a north-up raster —
     # negative Y step, reverse-ordered axis — it is the edge furthest from the geotransform origin.
@@ -597,5 +627,42 @@ end
     @test converged
     @test llh[3] ≈ ImagePairGeometry.height_at(RH(sloped), llh[1], llh[2]) atol = 1.0
     @test llh != want
+end
+
+# Live against the real public ITS_LIVE parameter shapefile and rasters
+# (`its-live-data.s3.amazonaws.com/autorift_parameters/v001/...`) — genuine network access, so this
+# follows the `radar_itslive_product.jl`/`radar_realdata.jl` convention: unconditionally included,
+# self-skipping via an environment variable rather than wrapped in an `if` in `runtests.jl`.
+if get(ENV, "IPG_LIVE_NETWORK_TEST", "") != "1"
+    @info "skipping the ITS_LIVE parameter-file network test; set IPG_LIVE_NETWORK_TEST=1 to run it"
+else
+    @testset "ITS_LIVE parameter files, live" begin
+        # A point on the Greenland ice sheet, known (not merely assumed) to fall in the NPS region —
+        # `parameter_info`'s own point-in-polygon lookup is exactly what this checks, so the point
+        # cannot be chosen to make that lookup trivial.
+        info = ImagePairGeometry.parameter_info(-40.0, 70.0)
+        @test info.name == "NPS"
+        @test info.epsg == 3413
+        @test endswith(info.paths.dem, "NPS_0120m_h.tif")
+        @test endswith(info.paths.vx, "NPS_0120m_vx0.tif")
+        @test startswith(info.paths.dem, "/vsicurl/")
+
+        grid = ImagePairGeometry.parameter_grid(info)
+        @test grid isa MapGrid
+        @test grid.size == (68480, 68480)
+        @test grid.crs == Rasters.EPSG(3413)
+
+        # A small window, so the twelve `/vsicurl` reads this makes stay cheap.
+        win = CartesianIndices((30_000:30_009, 20_000:20_009))
+        gi = ImagePairGeometry.geometry_inputs(info, win)
+        @test gi isa GeometryInputs
+        @test size(gi.dem) == size(gi.vx) == size(gi.ssm) == size(win)
+        @test all(isfinite, gi.dem)   # the DEM is defined everywhere on the ice sheet interior
+
+        # `parameter_window` alone, the primitive `geometry_inputs` calls twelve times over.
+        one = ImagePairGeometry.parameter_window(info.paths.vx, win)
+        @test one == gi.vx
+        @test eltype(one) == Float64
+    end
 end
 

@@ -33,6 +33,7 @@ import GeoInterface
 using DimensionalData
 using ArchGDAL
 using DiskArrays
+using NetworkOptions
 
 const GFT = Rasters.GeoFormatTypes
 
@@ -160,6 +161,113 @@ function _step_of(d, name::Symbol)
     return Float64(s)
 end
 
+# The ITS_LIVE production parameters.
+#
+# Every golden product records `autoRIFT_parameter_file` as
+# `autorift_parameters/v001/autorift_landice_0120m.shp`, a 122-feature polygon layer covering the UTM
+# zones plus the two polar stereographic grids. One feature contains a pair's centroid, and its
+# attributes name one cloud-optimized GeoTIFF per parameter and the EPSG code of the output grid. So
+# the region is a lookup against the scene, not a configuration choice.
+
+const PARAMETER_SHAPEFILE =
+    "/vsicurl/https://its-live-data.s3.amazonaws.com/autorift_parameters/v001/autorift_landice_0120m.shp"
+
+# `GeometryInputs` field to shapefile attribute. The attribute names are truncated to ten characters
+# because a DBF field name cannot be longer, which is why `vxSearchRan` and `StableSurfa` appear cut
+# off — they are, in the file.
+#
+# `vx0`/`vy0` rather than `vx`/`vy`: `window_offset` is the displacement a *prior* velocity implies,
+# and `vx`/`vy` in `GeometryInputs` are that prior velocity, not the measured field it is derived
+# from. `dhdx`/`dhdy` rather than `dhdxs`/`dhdys`, the smoothed pair: the reference's integer
+# conversion cannot represent the smoothed pair's `NaN` nodata at all.
+const PARAMETER_ATTRIBUTES = (dem = "h", dhdx = "dhdx", dhdy = "dhdy",
+                              vx = "vx0", vy = "vy0",
+                              srx = "vxSearchRan", sry = "vySearchRan",
+                              csminx = "xMinChipSiz", csminy = "yMinChipSiz",
+                              csmaxx = "xMaxChipSiz", csmaxy = "yMaxChipSiz",
+                              ssm = "StableSurfa")
+
+# `CURL_CA_BUNDLE` and friends because Julia's bundled GDAL does not find the system trust store, and
+# the failure surfaces as `CURL error: SSL certificate problem` — or, once GDAL has swallowed it, as
+# `Pointer 'hDS' is NULL`. They go in the process environment rather than through `setconfigoption`:
+# the curl handle reads them from there.
+#
+# `GDAL_DISABLE_READDIR_ON_OPEN` because otherwise GDAL lists the bucket prefix before every open,
+# which for a prefix holding thousands of parameter rasters is seconds of wasted requests per file.
+function _gdal_network_setup!()
+    for var in ("CURL_CA_BUNDLE", "SSL_CERT_FILE", "GDAL_HTTP_CAINFO")
+        haskey(ENV, var) || (ENV[var] = NetworkOptions.ca_roots_path())
+    end
+    ArchGDAL.setconfigoption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+    return nothing
+end
+
+# The shapefile stores plain HTTPS URLs; GDAL needs the `/vsicurl/` prefix to read one as a raster.
+_vsicurl(url::AbstractString) = startswith(url, "/vsicurl/") ? url : "/vsicurl/" * url
+
+function ImagePairGeometry.parameter_info(lon::Real, lat::Real)
+    _gdal_network_setup!()
+    ds = ArchGDAL.read(PARAMETER_SHAPEFILE)
+    layer = ArchGDAL.getlayer(ds, 0)
+    defn = ArchGDAL.layerdefn(layer)
+    names = [ArchGDAL.getname(ArchGDAL.getfielddefn(defn, i))
+             for i in 0:(ArchGDAL.nfield(defn) - 1)]
+    field(f, name) = ArchGDAL.getfield(f, findfirst(==(name), names) - 1)
+
+    pt = ArchGDAL.createpoint(Float64(lon), Float64(lat))
+    hit = nothing
+    for k in 0:(ArchGDAL.nfeature(layer) - 1)
+        ArchGDAL.getfeature(layer, k) do f
+            if ArchGDAL.contains(ArchGDAL.getgeom(f), pt)
+                hit = (; name = String(field(f, "name")), epsg = Int(field(f, "epsg")),
+                       paths = NamedTuple{keys(PARAMETER_ATTRIBUTES)}(
+                           map(a -> _vsicurl(String(field(f, a))), values(PARAMETER_ATTRIBUTES))))
+            end
+        end
+        hit === nothing || break
+    end
+    hit === nothing && error("no ITS_LIVE parameter region contains ($lon, $lat); the pair is " *
+                             "outside the coverage of $PARAMETER_SHAPEFILE")
+    return hit
+end
+
+# The DEM is what `geogridOptical` takes its geotransform, size and nodata value from
+# (`geogridOptical.cpp:337-339`), so every other parameter raster is read at the *DEM's* window and
+# the grid is the DEM's grid.
+function ImagePairGeometry.parameter_grid(info)
+    _gdal_network_setup!()
+    dem = ArchGDAL.read(info.paths.dem)
+    return MapGrid(geotransform = Tuple(ArchGDAL.getgeotransform(dem)),
+                   size = (ArchGDAL.width(dem), ArchGDAL.height(dem)), crs = info.epsg)
+end
+
+# `Float64` because that is the type the reference reads every parameter raster as — `GDT_Float64` in
+# each `RasterIO` call (`geogridOptical.cpp:700-850`) — so a chip size stored as `Int16` reaches the
+# kernel as a float on both sides and no conversion difference can enter.
+#
+# `window` is one-based `CartesianIndices`, as `ImagePairGeometry.grid_window` returns it; GDAL's
+# offsets are zero-based. Getting that wrong shifts every parameter raster by one pixel, which leaves
+# the location band exact — it reads no parameter — and perturbs every band that does read one, by
+# whole steps of whatever the raster quantizes to.
+function ImagePairGeometry.parameter_window(path::AbstractString, window::CartesianIndices{2})
+    xs, ys = window.indices
+    ds = ArchGDAL.read(path)
+    return Float64.(ArchGDAL.read(ds, 1, first(xs) - 1, first(ys) - 1, length(xs), length(ys)))
+end
+
+# **One task per raster, because every one of the twelve is a `/vsicurl` read.** Serially this stage
+# spends seconds of wall clock on a fraction of that in CPU — twelve round trips waiting end to end
+# rather than at once. Each task opens its own dataset, which is how GDAL is thread-safe: it is a
+# shared *handle* that is not, and none is shared here.
+#
+# `_gdal_network_setup!` runs before the spawn, since it sets process-wide configuration.
+function ImagePairGeometry.geometry_inputs(info, window::CartesianIndices{2})
+    _gdal_network_setup!()
+    tasks = map(p -> Threads.@spawn(parameter_window(p, window)), values(info.paths))
+    bands = NamedTuple{keys(info.paths)}(map(fetch, tasks))
+    return GeometryInputs(; bands...)
+end
+
 """
     RasterInputs(; dem, dhdx = nothing, ..., ssm = nothing)
 
@@ -184,18 +292,24 @@ chip size and stable surface and `32767` for search range, all of which are ordi
 Windows are indexed in grid coordinates, so the rasters must cover the whole grid, not just the
 window — which is the usual case, since the DEM is what defines the grid.
 """
-struct RasterInputs{D,S,V,R,Cn,Cx,M} <: AbstractInputSource
+#
+# One type parameter per raster, not one per pair. The x and y halves of a pair are separate files and
+# need not be the same type: `AREA_OR_POINT` is per file, and Rasters encodes it in the lookup's type,
+# so a pair that disagrees about it has two different `Raster` types. The published ITS_LIVE parameter
+# rasters do disagree — `SPS_0120m_vx0.tif` declares `Area` where `SPS_0120m_vy0.tif` declares `Point`
+# — so sharing a parameter across a pair rejects the real inputs with a `MethodError`.
+struct RasterInputs{D,Sx,Sy,Vx,Vy,Rx,Ry,Cnx,Cny,Cxx,Cxy,M} <: AbstractInputSource
     dem::D
-    dhdx::S
-    dhdy::S
-    vx::V
-    vy::V
-    srx::R
-    sry::R
-    csminx::Cn
-    csminy::Cn
-    csmaxx::Cx
-    csmaxy::Cx
+    dhdx::Sx
+    dhdy::Sy
+    vx::Vx
+    vy::Vy
+    srx::Rx
+    sry::Ry
+    csminx::Cnx
+    csminy::Cny
+    csmaxx::Cxx
+    csmaxy::Cxy
     ssm::M
 end
 

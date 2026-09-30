@@ -131,6 +131,74 @@ explicitly; the synthetic fixture declares one on the DEM alone, so `GetNoDataVa
 and returns 0.0. Passing 0.0 against real inputs treats every point of stationary ground as missing,
 which is most of a scene.
 
+## Against delivered ITS_LIVE products
+
+Everything above compares against a reference this repository drives, on inputs it chooses.
+`tools/golden/` compares against the 22 golden products ASF built with `hyp3_autorift` 0.28.4 — a
+different machine, a different parameter set, no involvement from here — and against `capture/in_*`,
+the arrays that run's Python correlator was actually handed. `tools/golden/README.md` records the
+harness, the gates and every measurement behind them; the results are:
+
+| | |
+|---|---|
+| optical: 18 runs, 72.3 M grid points | every band within its gate |
+| the eleven `Int32` bands | **bitwise**, one point excepted |
+| the eight `Float64` bands | 1.8e-8 worst, against the same 1e-7 bound the fixtures use |
+| the one same-CRS case (EPSG:3031 throughout) | **bitwise on all eight float bands** |
+| radar: 8 runs | see below |
+| the handoff to the correlator: 26 runs, 1.02 G array-point comparisons | exact |
+| `AutoRIFT.pointset`: 18 runs, 35.8 M searched points | exact |
+
+Two things production data establishes that the fixtures cannot.
+
+*The float bands need the operator's own scale, not each component's.* The four components of one
+displacement-to-velocity operator share the unit vectors they are computed from, and `off2vy_dy`
+divides by `xunit[1]`, which is near zero wherever the image axes are nearly perpendicular to the
+grid's. Measured across three cases, `xunit[1]` of 0.99, 0.10 and 0.003 amplify one shared absolute
+error by 1×, 9.6× and 332× — so normalizing each component by itself reports 1.3e-11 and 4.2e-6 for a
+single error in a single operator. The fixtures never show it because their imagery is not rotated
+against the grid.
+
+*The transform's contribution is larger than `src/fasttransform.jl` measures.* That file records
+FastGeoProjections and PROJ agreeing to 2e-14 relative, on EPSG:3413→32624. The kernel builds each
+axis unit vector from the *difference* of two inverse-transformed coordinates one pixel apart, and on
+that difference the two agree to 2.1e-11 for 3413↔32622 but only 2.7e-9 for 3413↔32607 — a
+hundredfold worse, while the coordinates themselves agree to 3.7e-15 in every case. Substituting PROJ
+drops the affected band to zero at most points, which is what attributes the difference to the
+transform rather than the kernel.
+
+### The radar index bands are not bitwise against a delivered product
+
+The *real-data* table above reports the range index bitwise and the azimuth index within one index on
+≤ 0.3% of points. Neither holds against a golden product, and the cause is what the run recorded rather
+than the kernel.
+
+`geogrid`'s log prints every parameter through C++ `ostream` — six significant figures. `dr` arrives as
+`2.32956`, so ±5e-6, which is 0.14 index units at the far edge of a 66,000-sample swath; the range
+index inherits that directly. `sensing_start` is worse: the azimuth index moves by one per PRI, and the
+log pins the time only to ±24 lines, so `tools/golden/geogrid_radar.jl` recovers it by scanning against
+the reference's own azimuth indices. That spends the azimuth band as evidence and leaves the range
+index, the chip sizes, the mask and every float band independent.
+
+Measured over the eight Sentinel-1 runs, as a fraction of the points the reference computed:
+
+| band | range across the runs |
+|---|---|
+| `location_x` (range) | 6.73% … 15.06% differ, always by exactly one |
+| `location_y` (azimuth) | 0.35% … 4.13% differ, always by exactly one |
+| chip sizes, stable-surface mask | **bitwise** |
+| `off2v*_dx`, dividing by `dr` | ≤ 3.6e-7 |
+| `off2v*_dy`, `off2v*_dr`, dividing by the along-track step | ≤ 7.8e-5 |
+| scale factors | ≤ 6.9e-9 |
+| computed-point count | 14 of 6,678,195 |
+
+Range is consistently four times worse than azimuth, which is what identifies `dr` as the dominant
+term. Fitting `dr` instead of reading it lifts range agreement from 86.0% to a peak of 94.6%, but the
+peak sits at 2.329569 — which prints as `2.32957`, outside what the log's own `2.32956` admits. A
+fitted value that contradicts the printed one is absorbing some other error, so the printed value
+stands and the bound is stated. Tightening either index needs the SAFE annotation, which a golden run
+does not keep.
+
 ## Deliberate divergences
 
 Each is a case where reproducing the reference exactly would mean reproducing undefined behavior
