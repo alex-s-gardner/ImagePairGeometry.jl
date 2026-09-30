@@ -629,3 +629,40 @@ end
     @test llh != want
 end
 
+# Live against the real public ITS_LIVE parameter shapefile and rasters
+# (`its-live-data.s3.amazonaws.com/autorift_parameters/v001/...`) — genuine network access, so this
+# follows the `radar_itslive_product.jl`/`radar_realdata.jl` convention: unconditionally included,
+# self-skipping via an environment variable rather than wrapped in an `if` in `runtests.jl`.
+if get(ENV, "IPG_LIVE_NETWORK_TEST", "") != "1"
+    @info "skipping the ITS_LIVE parameter-file network test; set IPG_LIVE_NETWORK_TEST=1 to run it"
+else
+    @testset "ITS_LIVE parameter files, live" begin
+        # A point on the Greenland ice sheet, known (not merely assumed) to fall in the NPS region —
+        # `parameter_info`'s own point-in-polygon lookup is exactly what this checks, so the point
+        # cannot be chosen to make that lookup trivial.
+        info = ImagePairGeometry.parameter_info(-40.0, 70.0)
+        @test info.name == "NPS"
+        @test info.epsg == 3413
+        @test endswith(info.paths.dem, "NPS_0120m_h.tif")
+        @test endswith(info.paths.vx, "NPS_0120m_vx0.tif")
+        @test startswith(info.paths.dem, "/vsicurl/")
+
+        grid = ImagePairGeometry.parameter_grid(info)
+        @test grid isa MapGrid
+        @test grid.size == (68480, 68480)
+        @test grid.crs == Rasters.EPSG(3413)
+
+        # A small window, so the twelve `/vsicurl` reads this makes stay cheap.
+        win = CartesianIndices((30_000:30_009, 20_000:20_009))
+        gi = ImagePairGeometry.geometry_inputs(info, win)
+        @test gi isa GeometryInputs
+        @test size(gi.dem) == size(gi.vx) == size(gi.ssm) == size(win)
+        @test all(isfinite, gi.dem)   # the DEM is defined everywhere on the ice sheet interior
+
+        # `parameter_window` alone, the primitive `geometry_inputs` calls twelve times over.
+        one = ImagePairGeometry.parameter_window(info.paths.vx, win)
+        @test one == gi.vx
+        @test eltype(one) == Float64
+    end
+end
+
