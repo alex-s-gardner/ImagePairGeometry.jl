@@ -58,6 +58,8 @@ export ProjectedCoordinate, RadarCoordinate, y_displacement_sign
 # `LookSide` and an incidence angle, so these are as public as the type itself. `Ellipsoid` is here
 # because `incidence_angle`'s four-argument form takes one; the keyword form defaults it.
 export Ellipsoid, Orbit, LookSide, LookLeft, LookRight, incidence_angle
+# An `Orbit`'s ground track projected into any CRS, independent of the radar solve above.
+export ground_track
 # Terrain height for `rdr2geo`. A bare number is still accepted everywhere; these are for a caller
 # supplying a varying source, and `height_at` is what such a source implements.
 export AbstractHeightSource, ConstantHeight, height_at

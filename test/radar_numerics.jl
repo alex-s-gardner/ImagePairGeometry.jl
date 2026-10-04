@@ -389,6 +389,27 @@ end
     @test_throws "finite and nonzero" Orbit(0.0, 0.0, pos, vel)
 end
 
+@testset "Orbit(; time, position) derives velocity by finite differencing" begin
+    t = [fx(s.t) for s in RFIX.orbit.state_vectors]
+    pos = [fv(s.position) for s in RFIX.orbit.state_vectors]
+    vel = [fv(s.velocity) for s in RFIX.orbit.state_vectors]
+
+    fd = Orbit(; time = t, position = pos)
+    errs = [sqrt(sum(abs2, fd.velocity[i] - vel[i])) for i in eachindex(vel)]
+
+    # Central difference in the interior is second order: at this fixture's 10 s spacing it tracks
+    # the true (isce3) velocity to 2e-5 relative, as documented on `Orbit`.
+    interior = errs[(begin + 1):(end - 1)]
+    @test sqrt(sum(abs2, interior) / length(interior)) < 0.2
+    @test maximum(interior) < 0.2
+
+    # The one-sided endpoints are first order and visibly worse — not a bug, the documented tradeoff.
+    @test errs[begin] > 10
+    @test errs[end] > 10
+
+    @test_throws "at least 2 times" Orbit(; time = t[1:1], position = pos[1:1])
+end
+
 @testset "Hermite position is bitwise or 1 ULP, velocity to 1e-13 relative" begin
     # Position is bitwise on every case. Velocity is not, and the cause is isce3's compiled
     # accumulation rather than the transcription: an independent NumPy implementation of the same
@@ -750,4 +771,34 @@ end
     tie = RadarPoint(0.0, 0.0, sr + 0.5 * dr, SVector{3,Float64}(1, 0, 0),
                      SVector{3,Float64}(0, 0, 0), SVector{3,Float64}(0, 0, 0))
     @test range_index(tie, sr, dr) === 1.0
+end
+
+# ------------------------------------------------------------------------------------ ground_track
+
+@testset "ground_track" begin
+    # Four nodes a second apart. `ground_track`'s two `interpolate` calls are placed exactly on
+    # nodes 2 and 3 (t = 1, t = 2), where the Hermite position basis reproduces the input position
+    # exactly regardless of velocity — the derivative-matching terms vanish at a node by
+    # construction — so this is an exact check, not a numerical one, and the velocity array below
+    # is a placeholder.
+    zero3 = SVector{3,Float64}(0.0, 0.0, 0.0)
+    t = [0.0, 1.0, 2.0, 3.0]
+    vel = fill(zero3, 4)
+    tf = ImagePairGeometry.fast_transform(4326, 4326)   # identity: dx, dy come back as plain degrees
+
+    # Moving east along the equator: longitude increases, latitude does not.
+    lons = deg2rad.([10.0, 10.01, 10.02, 10.03])
+    east = Orbit(; time = t, position = [lonlat_to_xyz(EL, SVector(lons[i], 0.0, 0.0)) for i in 1:4],
+                velocity = vel)
+    dx, dy = ground_track(east, 1.0, tf; dt = 1.0)
+    @test dx ≈ 0.01 atol = 1e-9
+    @test abs(dy) < 1e-9
+
+    # Moving north along a meridian: latitude increases, longitude does not.
+    lats = deg2rad.([40.0, 40.01, 40.02, 40.03])
+    north = Orbit(; time = t, position = [lonlat_to_xyz(EL, SVector(deg2rad(10.0), lats[i], 0.0))
+                                          for i in 1:4], velocity = vel)
+    dx2, dy2 = ground_track(north, 1.0, tf; dt = 1.0)
+    @test abs(dx2) < 1e-9
+    @test dy2 ≈ 0.01 atol = 1e-9
 end

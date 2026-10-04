@@ -75,6 +75,22 @@ locates the bracketing state vectors by arithmetic on the spacing rather than by
 At least four state vectors are required — the Hermite interpolant is built from four
 (`InterpolateOrbit.icc:22`).
 
+**`velocity` may be omitted** — the keyword form only — for an ephemeris that gives position alone,
+such as a Landsat `_ANG.txt`. It is then derived from `position` by finite differencing: central
+difference in the interior (second order), one-sided at the two ends (first order), so every sample
+gets a velocity rather than only the interior ones.
+
+Measured against `test/radar_numerics.jl`'s isce3 fixture, whose state vectors are 10 s apart: the
+interior, central-difference velocities differ from the fixture's own by 0.15 m/s rms and at worst —
+2e-5 relative to the fixture's ~7550 m/s orbital speed. The two one-sided endpoints are far worse,
+40.7 m/s, because the one-sided difference is only first order; being an order of magnitude coarser
+than the interior case here is a property of this fixture's spacing, not of the method. At a Landsat
+`_ANG.txt`'s native 1 s spacing the central-difference error above shrinks by the square of the
+spacing ratio to the order of millimeters per second, which is why `orbit_angle_check`'s call always
+interpolates at the ephemeris midpoint rather than near an edge. A caller needing bitwise orbit
+comparisons, or one working close to a sparse ephemeris' endpoints, should supply `velocity` directly
+rather than let it be derived.
+
 # Example
 
 ```jldoctest
@@ -136,7 +152,7 @@ _sepsum(spacing::Float64) = ntuple(4) do i
     return s
 end
 
-function Orbit(; time, position, velocity)
+function Orbit(; time, position, velocity = nothing)
     n = length(time)
     n >= 2 || throw(ArgumentError(
         "Orbit needs at least 2 times to derive a spacing, got $n"))
@@ -153,8 +169,23 @@ function Orbit(; time, position, velocity)
             "$(t[i]) s, expected $expected s for a spacing of $spacing s"))
     end
     pos = [SVector{3,Float64}(p[1], p[2], p[3]) for p in position]
-    vel = [SVector{3,Float64}(v[1], v[2], v[3]) for v in velocity]
+    vel = velocity === nothing ? _finite_difference_velocity(pos, spacing) :
+          [SVector{3,Float64}(v[1], v[2], v[3]) for v in velocity]
     return Orbit(t[begin], spacing, pos, vel)
+end
+
+# Central difference in the interior, one-sided at the two ends. The axis is already confirmed
+# uniform by the caller, so every difference divides by the same `spacing` (doubled in the
+# interior) rather than a recomputed `t[i+1] - t[i-1]`.
+function _finite_difference_velocity(pos::Vector{SVector{3,Float64}}, spacing::Float64)
+    n = length(pos)
+    vel = Vector{SVector{3,Float64}}(undef, n)
+    vel[begin] = (pos[begin + 1] - pos[begin]) / spacing
+    vel[end] = (pos[end] - pos[end - 1]) / spacing
+    for i in (firstindex(pos) + 1):(lastindex(pos) - 1)
+        vel[i] = (pos[i + 1] - pos[i - 1]) / (2 * spacing)
+    end
+    return vel
 end
 
 Base.length(o::Orbit) = length(o.position)
@@ -420,4 +451,38 @@ end
     search = Int(trunc((t - o.t0) / o.spacing)) + 1
     idx0 = clamp(search - 2, 0, n - 4)
     return idx0 + 1
+end
+
+"""
+    ground_track(orbit::Orbit, t::Real, transform; dt = 1.0, ellipsoid = Ellipsoid()) -> (dx, dy)
+
+The projected displacement of `orbit`'s ground track between `t` and `t + dt`, in the CRS
+`transform` maps geodetic coordinates onto.
+
+Two nearby points rather than one velocity vector, because a map projection is not linear: the
+projected image of a tangent vector is not generally the tangent of the projected curve, so
+transforming `interpolate(orbit, t)`'s velocity directly would be wrong except for an affine
+transform. Transforming two nearby positions and differencing avoids the question.
+
+`transform` is anything [`fast_transform`](@ref) or [`transform_pair`](@ref) accepts, built from
+geodetic coordinates (EPSG:4326, matching `ellipsoid`'s datum) to the target CRS —
+`fast_transform(4326, target_epsg)` is the ordinary case. `dt` defaults to 1 second, matching a
+Landsat ephemeris' own sample spacing; a smaller `dt` does not improve accuracy below
+[`interpolate`](@ref)'s own, and too large a `dt` starts to see the ground track's own curvature.
+
+**This is a grid bearing, not a geographic one, once `(dx, dy)` is reduced to an angle.** Grid north
+on a projected CRS departs from true north by the meridian convergence, which reaches several
+degrees away from the central meridian — the reason this function takes a `transform` at all rather
+than returning a bearing computed in lat/lon.
+"""
+function ground_track(orbit::Orbit, t::Real, transform; dt::Real = 1.0,
+                      ellipsoid::Ellipsoid = Ellipsoid())
+    tp = transform_pair(transform)
+    pos1, _ = interpolate(orbit, Float64(t))
+    pos2, _ = interpolate(orbit, Float64(t) + Float64(dt))
+    ll1 = xyz_to_lonlat(ellipsoid, pos1)
+    ll2 = xyz_to_lonlat(ellipsoid, pos2)
+    x1, y1, _ = tp.forward(rad2deg(ll1[1]), rad2deg(ll1[2]), ll1[3])
+    x2, y2, _ = tp.forward(rad2deg(ll2[1]), rad2deg(ll2[2]), ll2[3])
+    return (x2 - x1, y2 - y1)
 end
