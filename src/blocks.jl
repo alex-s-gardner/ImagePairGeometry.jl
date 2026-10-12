@@ -101,6 +101,8 @@ The bands the viewed inputs can produce, from the [`GeometryInputs`](@ref) they 
 supported_bands(src::InMemoryInputs, coordinate::AbstractImageCoordinate) =
     supported_bands(src.inputs, coordinate)
 
+# `transform::F`: a function passed through without being called is otherwise compiled for `Function`,
+# which turns every later use of it into a run-time dispatch.
 """
     pairgeometry_blocked(grid, pair, source; transform, window = nothing,
                          blocksize = DEFAULT_BLOCKSIZE, ntasks = nothing,
@@ -130,8 +132,6 @@ That last form exists for a transform holding state that is not safe to share ac
 PROJ pipeline wraps a context that is not: each task calls the factory once and owns the result for
 its lifetime. [`fast_transform`](@ref) needs no factory, being immutable and stateless.
 """
-# `transform::F`: a function passed through without being called is otherwise compiled for `Function`,
-# which turns every later use of it into a run-time dispatch.
 function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::AbstractInputSource;
                               transform::F, window = nothing,
                               blocksize::NTuple{2,Int} = DEFAULT_BLOCKSIZE,

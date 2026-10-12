@@ -66,6 +66,8 @@ below and agree.
 """
 @inline looksign(side::LookSide) = side === LookRight ? -1.0 : 1.0
 
+# `height::H`: a callable height source passed through without being called would otherwise be compiled
+# as an abstract `Function`, and every terrain sample in the solve would dispatch at run time.
 """
     rdr2geo(orbit, el, aztime, range; height, doppler = 0.0, wavelength,
             side, threshold = RDR2GEO_THRESHOLD, maxiter = RDR2GEO_MAXITER,
@@ -89,8 +91,6 @@ Ported from `Rdr2Geo.icc:44-168`. Returns the converged location; a failure to c
 in the source with a note that enabling it breaks tests (`Rdr2Geo.icc:153-162`), and the reference
 depends on that leniency. Use [`rdr2geo_converged`](@ref) when the distinction matters.
 """
-# `height::H`: a callable height source passed through without being called would otherwise be compiled
-# as an abstract `Function`, and every terrain sample in the solve would dispatch at run time.
 function rdr2geo(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Real;
                  height::H, doppler::Real = 0.0, wavelength::Real,
                  side::LookSide, threshold::Real = RDR2GEO_THRESHOLD,
