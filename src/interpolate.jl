@@ -357,7 +357,7 @@ struct InterpolatedTransform{T,G,P,M<:LatticeInterpolation} <: AbstractTransform
     lattice::Int
     mode::Symbol
     interpolation::M
-    window::CartesianIndices{2}
+    window::GridWindow
     zrange::NTuple{2,Float64}
 end
 
@@ -385,7 +385,8 @@ function InterpolatedTransform(transform, grid::MapGrid, pair::CoregisteredPair;
     win = window === nothing ?
         grid_window(grid, footprint_bounds(_resolve_transform(transform), pair.coordinate)) :
         window
-    return InterpolatedTransform(transform, grid, pair, Int(lattice), mode, interpolation, win,
+    return InterpolatedTransform(transform, grid, pair, Int(lattice), mode, interpolation,
+                                 convert(GridWindow, win),
                                  (Float64(zrange[1]), Float64(zrange[2])))
 end
 

@@ -39,7 +39,7 @@ what to use where the window is small.
 struct OffsetField{P<:CoregisteredPair,G<:MapGrid,D,T} <: AbstractMatrix{NTuple{2,Float64}}
     pair::P
     grid::G
-    window::CartesianIndices{2}
+    window::GridWindow
     dem::D
     transform::T
 
@@ -128,7 +128,7 @@ knowing: a caller who tightens the lattice and sees no improvement is looking at
 struct LatticeOffsetField{L,D} <: AbstractMatrix{NTuple{2,Float64}}
     lattice::L
     grid::MapGrid
-    window::CartesianIndices{2}
+    window::GridWindow
     dem::D
 end
 

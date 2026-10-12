@@ -206,19 +206,22 @@ function footprint_bounds(transform, c::RadarCoordinate; zrange = DEFAULT_ZRANGE
     el = Ellipsoid()
 
     # `np.linspace(0, nsamples - 1, num=21)` — endpoints included, so the last is the far edge.
-    ranges = ntuple(FOOTPRINT_RANGE_SAMPLES) do i
+    ranges = ntuple(Val(FOOTPRINT_RANGE_SAMPLES)) do i
         frac = (i - 1) / (FOOTPRINT_RANGE_SAMPLES - 1)
         return c.starting_range + frac * (c.nsamples - 1) * c.dr
     end
 
     # The azimuth times, in the reference's order: the first and last range lines
     # (`GeogridRadar.py:169-215`), then the 19 intermediate fractions its `linspace(0, 1, 21)[1:-1]`
-    # leaves (`:219`). Built as a tuple so the sampling loop below is one flat pass.
-    aztimes = (c.sensing_start, sensing_stop(c),
-               ntuple(FOOTPRINT_AZIMUTH_SAMPLES - 2) do i
-                   frac = i / (FOOTPRINT_AZIMUTH_SAMPLES - 1)
-                   return c.sensing_start + frac * (c.nlines - 1) / c.prf
-               end...)
+    # leaves (`:219`). Built as one `ntuple` over a `Val` length — past ten elements a plain length builds
+    # the tuple from a vector, of a length the compiler does not know — so the sampling loop below is one
+    # flat pass.
+    aztimes = ntuple(Val(FOOTPRINT_AZIMUTH_SAMPLES)) do i
+        i == 1 && return c.sensing_start
+        i == 2 && return sensing_stop(c)
+        frac = (i - 2) / (FOOTPRINT_AZIMUTH_SAMPLES - 1)
+        return c.sensing_start + frac * (c.nlines - 1) / c.prf
+    end
 
     # Unpacked once, and the sampling written as one loop rather than through a helper. Neither is
     # cosmetic: `Orbit` and `RadarCoordinate` both hold `Vector`s, so neither is `isbits`, and passing

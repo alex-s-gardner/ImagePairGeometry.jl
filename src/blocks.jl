@@ -17,7 +17,7 @@
 # the question does not arise.
 
 """
-    block_ranges(window, blocksize) -> Vector{CartesianIndices{2}}
+    block_ranges(window, blocksize) -> Vector{GridWindow}
 
 `window` partitioned into blocks of at most `blocksize`, in column-major order.
 
@@ -27,7 +27,7 @@ in each direction is short where the window does not divide evenly.
 function block_ranges(window::CartesianIndices{2}, blocksize::NTuple{2,Int})
     all(>(0), blocksize) || throw(ArgumentError("blocksize must be positive, got $blocksize"))
     xr, yr = window.indices
-    out = CartesianIndices{2}[]
+    out = GridWindow[]
     for jstart in first(yr):blocksize[2]:last(yr), istart in first(xr):blocksize[1]:last(xr)
         push!(out, CartesianIndices((istart:min(istart + blocksize[1] - 1, last(xr)),
                                      jstart:min(jstart + blocksize[2] - 1, last(yr)))))
@@ -67,8 +67,11 @@ resident — which is what makes it the right thing to compare a blocked run aga
 """
 struct InMemoryInputs{G<:GeometryInputs} <: AbstractInputSource
     inputs::G
-    window::CartesianIndices{2}
+    window::GridWindow
 end
+
+InMemoryInputs(inputs::GeometryInputs, window::CartesianIndices{2}) =
+    InMemoryInputs(inputs, convert(GridWindow, window))
 
 """
     readblock(src::AbstractInputSource, block::CartesianIndices{2}) -> GeometryInputs
@@ -98,6 +101,8 @@ The bands the viewed inputs can produce, from the [`GeometryInputs`](@ref) they 
 supported_bands(src::InMemoryInputs, coordinate::AbstractImageCoordinate) =
     supported_bands(src.inputs, coordinate)
 
+# `transform::F`: a function passed through without being called is otherwise compiled for `Function`,
+# which turns every later use of it into a run-time dispatch.
 """
     pairgeometry_blocked(grid, pair, source; transform, window = nothing,
                          blocksize = DEFAULT_BLOCKSIZE, ntasks = nothing,
@@ -128,12 +133,12 @@ PROJ pipeline wraps a context that is not: each task calls the factory once and 
 its lifetime. [`fast_transform`](@ref) needs no factory, being immutable and stateless.
 """
 function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::AbstractInputSource;
-                              transform, window = nothing,
+                              transform::F, window = nothing,
                               blocksize::NTuple{2,Int} = DEFAULT_BLOCKSIZE,
                               ntasks::Union{Nothing,Int} = nothing,
                               sink::AbstractOutputSink = InMemoryOutputs(),
                               params::GeometryParams = GeometryParams(),
-                              nodata::NoDataPolicy = nodata_from(nothing))
+                              nodata::NoDataPolicy = nodata_from(nothing)) where {F}
     coord = pair.coordinate
     # Validated before anything is built, so a bad argument is reported rather than surfacing as a
     # failure deeper in.
@@ -148,7 +153,8 @@ function pairgeometry_blocked(grid::MapGrid, pair::CoregisteredPair, source::Abs
     shared = (window === nothing || serial) ? _resolve_transform(transform) : nothing
     win = window === nothing ? grid_window(grid, footprint_bounds(shared, coord)) : window
 
-    ctx = SinkContext(grid, coord, win, blocksize, nodata, supported_bands(source, coord))
+    ctx = SinkContext(grid, coord, convert(GridWindow, win), blocksize, nodata,
+                      supported_bands(source, coord))
     prepared = prepare_sink(sink, ctx)
     blocks = block_ranges(win, blocksize)
     n = ntasks === nothing ? min(length(blocks), Threads.nthreads()) : ntasks
@@ -181,9 +187,9 @@ end
 # assignment landed last — several tasks then share one PROJ context and one block buffer. Each call
 # here gets a frame of its own, which is what makes ownership per task. `test/blocks.jl` asserts it
 # through a sink that stamps its buffer.
-function _run_task!(prepared, ctx::SinkContext, dt::Float64, source::AbstractInputSource, transform,
+function _run_task!(prepared, ctx::SinkContext, dt::Float64, source::AbstractInputSource, transform::F,
                     params::GeometryParams, blocks::Vector{<:CartesianIndices{2}},
-                    next::Threads.Atomic{Int})
+                    next::Threads.Atomic{Int}) where {F}
     tf = _resolve_transform(transform)
     state = sink_taskstate(prepared, ctx)
     while true

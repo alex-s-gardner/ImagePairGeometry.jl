@@ -49,7 +49,7 @@ What a sink is told about the run it is serving.
 struct SinkContext{G<:MapGrid,K<:AbstractImageCoordinate}
     grid::G
     coordinate::K
-    window::CartesianIndices{2}
+    window::GridWindow
     blocksize::NTuple{2,Int}
     nodata::NoDataPolicy
     bands::Vector{Symbol}
@@ -117,9 +117,15 @@ function finish_sink end
 # inheriting the parent's georeferencing would place every block at the window's origin.
 function _block_view(r::PairGeometry, local_block::CartesianIndices{2},
                      window::CartesianIndices{2}, geotransform::NTuple{6,Float64})
-    ints = ntuple(i -> view(getfield(r, INT_BANDS[i]), local_block), length(INT_BANDS))
-    floats = ntuple(i -> view(getfield(r, FLOAT_BANDS[i]), local_block), length(FLOAT_BANDS))
-    return PairGeometry(ints..., floats..., geotransform, r.crs, window, r.nodata, r.coordinate)
+    # Every band named, in field order (`INT_BANDS`, then `FLOAT_BANDS`), so each view's type is
+    # inferred: a field name looked up at run time is a run-time dispatch for every later use.
+    v(a) = view(a, local_block)
+    return PairGeometry(v(r.location_x), v(r.location_y), v(r.offset_x), v(r.offset_y),
+                        v(r.search_x), v(r.search_y), v(r.chip_min_x), v(r.chip_min_y),
+                        v(r.chip_max_x), v(r.chip_max_y), v(r.stable_surface),
+                        v(r.off2vx_dx), v(r.off2vx_dy), v(r.off2vy_dx), v(r.off2vy_dy),
+                        v(r.off2vx_dr), v(r.off2vy_dr), v(r.scale_x), v(r.scale_y),
+                        geotransform, r.crs, convert(GridWindow, window), r.nodata, r.coordinate)
 end
 
 """
