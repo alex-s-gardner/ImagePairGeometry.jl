@@ -90,6 +90,11 @@ export fast_transform, FastTransform
 export mapgrid, image_footprint, blocksize_from_chunks, write_geotiffs
 export parameter_info, parameter_grid, parameter_window, geometry_inputs
 
+# A rectangular block of grid points, as `grid_window` and `block_ranges` produce it. Structs hold a
+# window as this concrete type, so code reading one dispatches statically; any `CartesianIndices{2}`
+# over unit ranges converts to it.
+const GridWindow = CartesianIndices{2,Tuple{UnitRange{Int},UnitRange{Int}}}
+
 include("kernel/vecmath.jl")
 include("kernel/rounding.jl")
 # The radar numerics. `ellipsoid.jl` needs the three-vector primitives above; the rest build on it in

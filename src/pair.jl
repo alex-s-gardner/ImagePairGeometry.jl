@@ -80,12 +80,17 @@ _check_crs(::Nothing, ::Any) = nothing
 function _check_crs(a, b)
     a == b || throw(ArgumentError(
         "coregister requires both images in one coordinate reference system, but the reference " *
-        "declares $a and the secondary $b. Intersecting two footprints is arithmetic in a single " *
+        "declares " * _crs_name(a) * " and the secondary " * _crs_name(b) * ". Intersecting two footprints is arithmetic in a single " *
         "system, so the overlap of images in different ones is not meaningful. Reproject one before " *
         "pairing. Two spellings of the same CRS also compare unequal here, since resolving them would " *
         "need a projection library; pass them in the same form."))
     return nothing
 end
+
+# A CRS as a message names it. An EPSG code is written out rather than printed: printing a struct goes
+# through the generic `show`, which a `--trim`ed binary does not have.
+_crs_name(c::GFT.EPSG) = "EPSG:" * join(map(string, c.val), "+")
+_crs_name(c) = string(c)
 
 """
     CoregisteredPair
@@ -266,9 +271,12 @@ function coregister(reference::ImageFootprint, secondary::ImageFootprint; dt::Re
     if x1a > t1.size[1] - 1 || x1b > t1.size[1] - 1 || y1a > t1.size[2] - 1 ||
        y1b > t1.size[2] - 1 || x2a > t2.size[1] - 1 || x2b > t2.size[1] - 1 ||
        y2a > t2.size[2] - 1 || y2b > t2.size[2] - 1
+        # Built in two halves: one interpolation of more than ten values infers as a `Vararg{Any}`
+        # call, which a `--trim`ed binary cannot make.
+        reference = "reference ($x1a:$x1b, $y1a:$y1b) in size $(t1.size)"
+        secondary = "secondary ($x2a:$x2b, $y2a:$y2b) in size $(t2.size)"
         throw(ArgumentError(
-            "coregistered index exceeds image bounds: reference ($x1a:$x1b, $y1a:$y1b) in " *
-            "size $(t1.size), secondary ($x2a:$x2b, $y2a:$y2b) in size $(t2.size). The two " *
+            "coregistered index exceeds image bounds: " * reference * ", " * secondary * ". The two " *
             "images most likely do not overlap."))
     end
     if x1a < 0 || x1b < 0 || y1a < 0 || y1b < 0 || x2a < 0 || x2b < 0 || y2a < 0 || y2b < 0

@@ -74,7 +74,7 @@ struct PairGeometry{I<:AbstractMatrix{Int32},F<:AbstractMatrix{Float64},C,
 
     geotransform::NTuple{6,Float64}
     crs::C
-    window::CartesianIndices{2}
+    window::GridWindow
     nodata::NoDataPolicy
     coordinate::K
 end
@@ -251,7 +251,8 @@ function allocate_geometry(window::CartesianIndices{2}, geotransform::NTuple{6,F
     # constructor becomes a call `juliac --trim` cannot resolve.
     ints = ntuple(_ -> fill(Int32(nodata.output), sz), Val(length(INT_BANDS)))
     floats = ntuple(_ -> fill(nodata.output, sz), Val(length(FLOAT_BANDS)))
-    return PairGeometry(ints..., floats..., geotransform, crs, window, nodata, coordinate)
+    return PairGeometry(ints..., floats..., geotransform, crs, convert(GridWindow, window), nodata,
+                        coordinate)
 end
 
 """

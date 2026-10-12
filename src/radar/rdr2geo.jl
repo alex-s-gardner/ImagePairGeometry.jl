@@ -89,11 +89,13 @@ Ported from `Rdr2Geo.icc:44-168`. Returns the converged location; a failure to c
 in the source with a note that enabling it breaks tests (`Rdr2Geo.icc:153-162`), and the reference
 depends on that leniency. Use [`rdr2geo_converged`](@ref) when the distinction matters.
 """
+# `height::H`: a callable height source passed through without being called would otherwise be compiled
+# as an abstract `Function`, and every terrain sample in the solve would dispatch at run time.
 function rdr2geo(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Real;
-                 height, doppler::Real = 0.0, wavelength::Real,
+                 height::H, doppler::Real = 0.0, wavelength::Real,
                  side::LookSide, threshold::Real = RDR2GEO_THRESHOLD,
                  maxiter::Integer = RDR2GEO_MAXITER,
-                 extraiter::Integer = RDR2GEO_EXTRAITER)
+                 extraiter::Integer = RDR2GEO_EXTRAITER) where {H}
     llh, _ = rdr2geo_converged(orbit, el, aztime, range; height, doppler, wavelength, side,
                                threshold, maxiter, extraiter)
     return llh
@@ -133,10 +135,10 @@ in that case — see [`rdr2geo`](@ref) — so this is for a caller that wants to
 wants a different result.
 """
 function rdr2geo_converged(orbit::Orbit, el::Ellipsoid, aztime::Real, range::Real;
-                           height, doppler::Real = 0.0, wavelength::Real,
+                           height::H, doppler::Real = 0.0, wavelength::Real,
                            side::LookSide, threshold::Real = RDR2GEO_THRESHOLD,
                            maxiter::Integer = RDR2GEO_MAXITER,
-                           extraiter::Integer = RDR2GEO_EXTRAITER)
+                           extraiter::Integer = RDR2GEO_EXTRAITER) where {H}
     r = Float64(range)
     pos, vel = interpolate(orbit, aztime)
     tcn = geodetic_tcn(pos, vel)
