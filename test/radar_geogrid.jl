@@ -143,15 +143,18 @@ end
     #
     # The bands affected are the azimuth index and the search extent computed from it. Range indices,
     # chip sizes and the stable-surface mask do not involve the azimuth time and are bitwise.
+    #
+    # The reference's azimuth index also carries its whole-line two-clock lag, which this package does
+    # not reproduce; `reference_band` removes it from the reference before the comparison.
     tolerant = (:location_y, :search_y, :offset_x, :offset_y, :search_x)
     worst = Dict{String,Tuple{Int,Int}}()
     for c in GFIX.cases
-        r, win, _, _, _ = radar_case(c)
+        r, win, coord, _, _ = radar_case(c)
         for (file, fields) in reference_files(r)
             c.outputs[Symbol(file)] === nothing && continue
             fields[1] in INT_BANDS || continue
             for (bi, f) in enumerate(fields)
-                want = Int32.(refband(c.name, file, bi))
+                want = reference_band(Int32.(refband(c.name, file, bi)), f, coord.nlines)
                 got = getfield(r, f)
                 @test size(got) == size(want)
 

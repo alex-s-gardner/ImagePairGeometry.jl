@@ -493,6 +493,34 @@ magnitude of this solve's own fixed-point floor and 1.3e-9 of a range sample. Ev
 eight-case fixture is unchanged, and the float bands' worst agreement against isce3 moves from
 1.0700e-4 to 1.0698e-4.
 
+### The zero-Doppler solve runs on one clock
+
+`geogridRadar.cpp` starts each zero-Doppler solve on two clocks that are not at the same instant: the
+image-clock time `tline` at `sensingStart + 0.5 * nLines / prf` (`:328`, `:911`) and the orbit-clock
+time `tlined` at `sensingStart + (floor(nLines / 2) - 1) / prf` (`GeogridRadar.py:347`, `:432`, `:910`).
+Newton gives both the same increments and converges `tlined` to the time the satellite was at the
+solved position, so `tline` ends `0.5 nLines - floor(nLines / 2) + 1` pulse intervals late — 1 line
+for an even line count, 1.5 for an odd one — and every azimuth index the kernel writes (`:972`) is that
+many lines down-track of the geometrically consistent one.
+
+ISCE2's geogrid, which the reference replaced, has one clock: `tline` starts at
+`sensingStart + 0.5 * nLines / prf` and the orbit is interpolated at `tline` itself (`geogrid.cpp:340`,
+`:977`, autoRIFT 1.4). This package does the same: [`orbit_midtime`](@ref) is [`midtime`](@ref) on the
+orbit's clock, so the converged image-clock time is where the satellite was.
+
+Measured on `S1B_IW_SLC__1SSH_20180630T095929` × `20180712T095930` (13,581 mosaic lines, so 1.5): every
+azimuth index moves up-track by one or two lines, half the points each, and no range index moves.
+Against the ISCE2 product of that pair (`G0120V02_P053`), the along-track feature shift falls from
+12.2 m to 0.1 m in IW1 and from 15.5 m to 0.2 m in IW2, and the fast-ice median speed difference from
+14 to 5 m/yr.
+
+The fixtures generated from `geogridRadar` carry the reference's offset. `test/radar_geogrid.jl` and
+`test/radar_realdata.jl` therefore compare this package's azimuth index against the reference's less
+that whole line (`reference_azimuth_lag` in `test/npz.jl`); with it removed, the integer bands differ
+from the fixtures on exactly the points they did before. `tools/golden/geogrid_radar.jl` recovers each
+run's `sensing_start` by matching the reference's azimuth indices, so there the offset is absorbed into
+the recovered clock, one pulse earlier than the run's own, and the gates are unchanged.
+
 ## Reproduced quirks
 
 These are reference behaviors that look like defects and are matched anyway, because matching the
@@ -595,10 +623,10 @@ recovers both (`geogridRadar.cpp:684-686`):
 - `azm_res = norm(satvmid) / prf` — the distance the platform travels between pulses.
 
 `satvmid` is interpolated at `tmidd` (`:435`), the `tmids` timestamp, which is the **orbit**-clock
-midpoint `sensingStart + (floor(nLines / 2) - 1) / prf`. Not the `sensingStart`-clock midpoint
-`sensingStart + 0.5 * nLines / prf` that initializes `tline` at `:328`. For an even line count the two
-differ by one pulse interval, so using the wrong one changes `azm_res` in its last bits — the first
-place the two-clock split has an observable consequence.
+midpoint `sensingStart + (floor(nLines / 2) - 1) / prf`, one pulse from the `sensingStart + 0.5 * nLines /
+prf` that initializes `tline` at `:328` for an even line count. This package interpolates at its own
+solve start, [`orbit_midtime`](@ref), so `azm_res` differs from the kernel's in its last bits; see "The
+zero-Doppler solve runs on one clock".
 
 ### The radar outputs divide by two different azimuth spacings
 
@@ -646,7 +674,7 @@ Every input to the solve has been verified bit-identical, which is what localize
 | the height fed to the range-Doppler solve | `demLine[jj]` as implemented; zero instead is 53× worse |
 | Hermite velocity contraction | its 4e-14 perturbs the Newton root by 3.5e-11 s — eight orders below what is observed |
 | the `tlined` epoch magnitude | seconds since 1970 costs ~11 ULP over 51 iterations, the right order, but reproducing it moves the residual only from -0.0014860 to -0.0014777 lines: 0.6% of the effect |
-| the one-pulse `tline`/`tlined` offset | removing it makes agreement far worse — 4 points matching instead of 953 |
+| the one-pulse `tline`/`tlined` offset | removing it makes agreement far worse — 4 points matching instead of 953 — because the kernel's index carries it as a whole line; the comparison now removes that line from the reference instead ("The zero-Doppler solve runs on one clock") |
 
 Range and azimuth come from the same solve, and the range is bitwise, so the solve converges
 correctly and the residual is confined to converting that time to an index.
@@ -821,18 +849,10 @@ They hold the same instant on two different clocks, which is why both are needed
   (`:432`), which initializes `tlined`. That is the orbit's clock.
 
 `tline - tlined` is therefore a constant, and Newton preserves it — both receive the same increment.
-But the constant is *not* just the epoch difference, and this is the part that matters: the two are
-initialized with different offsets from `sensingStart`, `0.5 * nLines / prf` against
-`(floor(nLines / 2) - 1) / prf`. The epoch cancels out of their difference, leaving those offsets,
-which differ by exactly one pulse interval for an even line count.
-
-So the converged `tline` corresponds to a satellite position one pulse away from the one the orbit was
-interpolated at, and `azind` — computed from the `tline` lineage at `:972` — is offset by about one
-line from the geometrically consistent value. Measured: a grid point placed by `rdr2geo` at a known
-azimuth time comes back with an index one greater than that time implies.
-
-Reproduced, because it is what the reference's products contain. A caller correlating against those
-products needs the same offset or its chips will be off by a line.
+The reference initializes the two with different offsets from `sensingStart`, `0.5 * nLines / prf`
+against `(floor(nLines / 2) - 1) / prf`, which this package does not reproduce; see "The zero-Doppler
+solve runs on one clock" under *Deliberate divergences*. Here both start at `0.5 * nlines / prf`, so
+the difference is the epoch offset alone.
 
 Their difference is preserved to rounding rather than to the bit: each subtraction rounds to its own
 exponent, so scales separated by a large epoch offset drift by an ULP of the times, about 1e-13 s per

@@ -119,10 +119,9 @@ these are the radar equivalents of a geotransform's pixel size, recovered from g
 there is no geotransform to read them off.
 
 The azimuth size uses the platform speed at scene center, so it is a single value for the scene
-rather than a per-point quantity. Specifically it uses `satvmid` (`geogridRadar.cpp:686`), which is
-interpolated at `tmidd` (`:435`) — the *orbit*-clock midpoint from [`orbit_midtime`](@ref), not the
-`sensing_start`-clock one from [`midtime`](@ref). The two differ by a pulse interval, so the choice
-changes `azm_res` in the last bits.
+rather than a per-point quantity: the speed at [`orbit_midtime`](@ref), where the zero-Doppler solve
+starts. `geogridRadar.cpp:686` takes it at its own, one-pulse-different start (`tmidd`, `:435`), so
+`azm_res` differs from that kernel's in the last bits.
 """
 xsize(c::RadarCoordinate) = c.dr / sin(c.incidence_angle)
 
@@ -137,29 +136,27 @@ end
 Azimuth time of the scene's middle line, on the `sensing_start` clock.
 
 `sensing_start + 0.5 * nlines / prf`, matching `geogridRadar.cpp:328`, which is the initial guess
-every per-point solve starts from. Note this is *not* the expression
-`GeogridRadar.py:346-347` uses to build the orbit-clock midpoint — see [`orbit_midtime`](@ref).
+every per-point solve starts from. [`orbit_midtime`](@ref) is the same instant on the orbit's clock.
 """
 midtime(c::RadarCoordinate) = c.sensing_start + 0.5 * c.nlines / c.prf
 
 """
     orbit_midtime(c::RadarCoordinate) -> Float64
 
-Scene midpoint on the *orbit's* clock, as `GeogridRadar.py:346-347` computes it:
-`sensing_start + (floor(nlines / 2) - 1) / prf`, shifted by `orbit_epoch_offset`.
+[`midtime`](@ref) on the *orbit's* clock: `sensing_start + 0.5 * nlines / prf + orbit_epoch_offset`.
 
-Deliberately a different expression from [`midtime`](@ref), and the difference reaches the output.
-Both are offsets from `sensing_start` on their own clocks, so the epoch cancels from
-`midtime - orbit_midtime`, leaving `0.5 * nlines / prf` against `(floor(nlines / 2) - 1) / prf` — one
-pulse interval apart for an even line count.
+The zero-Doppler solve starts its image-clock time at `midtime` and interpolates the orbit at this
+instant, and both receive the same Newton increments, so the converged image-clock time is the time
+the satellite was at the solved position and the azimuth index is geometrically consistent. This is
+how ISCE2's geogrid starts the solve (`geogrid.cpp:340`, `:977`, autoRIFT 1.4), on one clock.
 
-`geo2rdr` preserves that difference, so the converged azimuth time corresponds to a satellite position
-one pulse from where the orbit was interpolated, and the azimuth index is one line off the
-geometrically consistent value. Reproduced rather than reconciled: the reference's products contain
-that offset. See `REFERENCE.md`.
+`geogridRadar.cpp` (autoRIFT 2.x) differs: it interpolates the orbit at
+`sensing_start + (floor(nlines / 2) - 1) / prf` (`GeogridRadar.py:347`) while its image clock starts
+at `midtime` (`:328`), so its converged image time, and every azimuth index it writes, is
+`0.5 nlines - floor(nlines / 2) + 1` lines late — 1 line for an even line count, 1.5 for an odd one.
+That is not reproduced. See `REFERENCE.md`, "The zero-Doppler solve runs on one clock".
 """
-orbit_midtime(c::RadarCoordinate) =
-    c.sensing_start + (floor(c.nlines / 2) - 1) / c.prf + c.orbit_epoch_offset
+orbit_midtime(c::RadarCoordinate) = midtime(c) + c.orbit_epoch_offset
 
 """
     sensing_stop(c::RadarCoordinate) -> Float64

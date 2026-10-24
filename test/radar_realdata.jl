@@ -34,6 +34,9 @@ using Test
 const RA_EXT = Base.get_extension(ImagePairGeometry, :ImagePairGeometryRastersExt)
 using .RA_EXT: RasterInputs
 
+# `reference_band`, which `runtests.jl` has already loaded when this file runs inside the suite.
+isdefined(@__MODULE__, :reference_band) || include(joinpath(@__DIR__, "npz.jl"))
+
 const REALDATA_DIR = get(ENV, "IPG_REALDATA_DIR", "")
 const PARAMS_DIR = get(ENV, "IPG_PARAMS_DIR",
                        expanduser("~/data/autorift/tests/params"))
@@ -200,7 +203,7 @@ else
             fields[1] in INT_BANDS || continue
             isfile(joinpath(REALDATA_DIR, file)) || continue
             for (bi, f) in enumerate(fields)
-                want = Int32.(read_reference_band(REALDATA_DIR, file, bi))
+                want = reference_band(Int32.(read_reference_band(REALDATA_DIR, file, bi)), f, case.coord.nlines)
                 got = getfield(result, f)
                 @test size(got) == size(want)
 
