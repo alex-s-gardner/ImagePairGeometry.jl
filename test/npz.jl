@@ -249,5 +249,5 @@ function reference_band(want::AbstractMatrix, field::Symbol, nlines::Integer)
     w = Int.(want)
     field === :location_y || return w
     lag = reference_azimuth_lag(nlines)
-    return map(v -> v == -32767 ? v : v - lag, w)
+    return map(v -> v == ImagePairGeometry.NODATA_INT32 ? v : v - lag, w)
 end

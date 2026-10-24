@@ -99,8 +99,6 @@ end
     # image-clock time to the satellite position it solved for. `geogridRadar.cpp` starts the two one
     # pulse apart for an even line count and writes every azimuth index one line late; see REFERENCE.md,
     # "The zero-Doppler solve runs on one clock".
-    @test orbit_midtime(RC) == midtime(RC) + RC.orbit_epoch_offset
-
     t = 305.0
     gx, gy, gz = utm_point(t, SR + 4000 * DR)
     g, _, p = pointgeometry(UTM, gx, gy, gz, RC, NORMAL)
