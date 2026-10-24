@@ -83,8 +83,13 @@ as a fraction of the points the reference computed:
 
 | band | across the eight runs |
 |---|---|
-| `location_x` | 6.73% … 15.06%, every disagreement exactly one |
-| `location_y` | 0.35% … 4.13%, every disagreement exactly one |
+| `location_x` | 4.04% … 11.95%, every disagreement exactly one |
+| `location_y` | 0.20% … 2.69%, every disagreement exactly one |
+
+The recovered clock absorbs the reference's whole-line two-clock lag, which this package does not
+reproduce (`REFERENCE.md`, "The zero-Doppler solve runs on one clock"): each run's recovered
+`sensing_start` sits that many lines from the one `geogridRadar` used, and the bands are compared as
+before.
 
 Range is consistently four times worse, which is what identifies `dr` as the dominant term rather than
 the clock — the azimuth index is fixed against the reference's own output and still carries the
