@@ -77,7 +77,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['lts', '1']
+        # SLCDatasets requires Julia 1.11: its unregistered dependencies resolve only through `[sources]`.
+        version: ['1.11', '1']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/checkout@v7
@@ -115,6 +116,8 @@ jobs:
           Pkg.develop([Pkg.PackageSpec(path = "deps/FastGeoProjections.jl"),
                        Pkg.PackageSpec(path = "deps/SLCDatasets.jl"),
                        Pkg.PackageSpec(path = ".")])
+          # SLCDatasets' NISAR fixture writer, which the extension test includes, reads its fixture with JSON.
+          Pkg.add("JSON")
           Pkg.instantiate()
           include(joinpath(pwd(), "test", "runtests.jl"))
   docs:
