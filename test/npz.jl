@@ -222,3 +222,32 @@ function setup_case(name)
             grid_epsg = Int(c.dem.epsg), image_epsg = Int(c.image.epsg),
             inputs = fixture_inputs(GEOGRID_ARRAYS, c, win), makepair = s.transform)
 end
+
+"""
+    reference_azimuth_lag(nlines) -> Int
+
+How many lines `geogridRadar.cpp` writes every azimuth index down-track of the geometrically consistent
+one: its image clock starts the zero-Doppler solve `0.5 nlines - (floor(nlines / 2) - 1)` pulse
+intervals after its orbit clock (`:328`, `GeogridRadar.py:347`), and this package starts both at the
+same instant. An integer for an even line count, which every fixture has; see `REFERENCE.md`, "The
+zero-Doppler solve runs on one clock".
+"""
+function reference_azimuth_lag(nlines::Integer)
+    iseven(nlines) || throw(ArgumentError(
+        "the reference's azimuth lag is 1.5 lines for an odd line count ($nlines), which a whole-line " *
+        "correction of its indices cannot remove"))
+    return Int(0.5 * nlines - (floor(nlines / 2) - 1))
+end
+
+"""
+    reference_band(want, field, nlines) -> Matrix{Int}
+
+A reference integer band as this package should reproduce it: the azimuth index (`location_y`)
+less [`reference_azimuth_lag`](@ref), every other band and every sentinel unchanged.
+"""
+function reference_band(want::AbstractMatrix, field::Symbol, nlines::Integer)
+    w = Int.(want)
+    field === :location_y || return w
+    lag = reference_azimuth_lag(nlines)
+    return map(v -> v == ImagePairGeometry.NODATA_INT32 ? v : v - lag, w)
+end

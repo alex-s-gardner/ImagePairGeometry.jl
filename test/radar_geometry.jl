@@ -86,27 +86,26 @@ end
         gx, gy, gz = utm_point(t, rng)
         _, _, p = pointgeometry(UTM, gx, gy, gz, RC, NORMAL)
 
-        # The azimuth time carries the reference's one-pulse offset, so it lands one interval late.
-        @test p.aztime ≈ t + 1 / PRF rtol = 1e-9
+        # Both clocks start at the scene midpoint, so the solve returns the time the point was placed at.
+        @test p.aztime ≈ t rtol = 1e-12
         @test p.range ≈ rng rtol = 1e-12
         # The range index is unaffected — it comes from the range, not the time.
         @test range_index(p, SR, DR) == Float64(nsamp)
     end
 end
 
-@testset "the azimuth index carries the one-line offset" begin
-    # Not a defect. `midtime` and `orbit_midtime` are offsets from `sensing_start` on two clocks; the
-    # epoch cancels from their difference, leaving one pulse interval. `geo2rdr` preserves it, so the
-    # converged time is one pulse from the position the orbit was interpolated at. See REFERENCE.md.
-    @test (midtime(RC) - orbit_midtime(RC)) * PRF ≈ 1.0 rtol = 1e-9
-
+@testset "the azimuth index is the time the point was imaged" begin
+    # `midtime` and `orbit_midtime` are the same instant on the two clocks, so `geo2rdr` converges the
+    # image-clock time to the satellite position it solved for. `geogridRadar.cpp` starts the two one
+    # pulse apart for an even line count and writes every azimuth index one line late; see REFERENCE.md,
+    # "The zero-Doppler solve runs on one clock".
     t = 305.0
     gx, gy, gz = utm_point(t, SR + 4000 * DR)
     g, _, p = pointgeometry(UTM, gx, gy, gz, RC, NORMAL)
 
     geometric = round((t - RKW.sensing_start) * PRF)
-    @test azimuth_index(p, RKW.sensing_start, PRF) == geometric + 1
-    @test g.image_xy[2] == geometric + 1
+    @test azimuth_index(p, RKW.sensing_start, PRF) == geometric
+    @test g.image_xy[2] == geometric
 end
 
 @testset "axis vectors are unit length and sensibly oriented" begin

@@ -129,13 +129,12 @@ end
     @test chip_size_pixels(240.0, xsize(RC)) > chip_size_pixels(240.0, ysize(RC))
 end
 
-@testset "the two clocks differ by one pulse interval" begin
-    # Not a defect: `midtime` is `geogridRadar.cpp:328`'s expression and `orbit_midtime` is
-    # `GeogridRadar.py:346`'s, and they feed different clocks. For an even line count they differ by
-    # exactly one line. See REFERENCE.md.
-    @test iseven(R.nlines)
-    lines = (midtime(RC) - orbit_midtime(RC)) * cx(R.prf)
-    @test lines ≈ 1.0 rtol = 1e-9
+@testset "the two clocks start at the same instant" begin
+    # `orbit_midtime` is `midtime` moved onto the orbit's clock, so the epoch offset is their whole
+    # difference. `geogridRadar.cpp` starts its orbit clock at `GeogridRadar.py:347`'s
+    # `(floor(nlines / 2) - 1) / prf` instead, one pulse earlier for an even line count; that is not
+    # reproduced. See REFERENCE.md, "The zero-Doppler solve runs on one clock".
+    @test orbit_midtime(RC) == midtime(RC) + RC.orbit_epoch_offset
 
     # `sensing_stop` is the last line, one interval short of `nlines / prf`.
     @test sensing_stop(RC) ≈ cx(R.sensing_start) + (R.nlines - 1) / cx(R.prf)
