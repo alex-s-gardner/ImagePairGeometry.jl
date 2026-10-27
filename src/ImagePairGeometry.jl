@@ -71,6 +71,7 @@ export chebyshev_orbit
 # them. See `GEO2RDR_ITERATIONS` and `RANGE_DOPPLER_ITERATIONS`.
 export GEO2RDR_ITERATIONS, RANGE_DOPPLER_ITERATIONS, geo2rdr_rate, geo2rdr_iterations_needed
 export MapGrid, footprint_bounds, grid_window
+export nested_window, lattice_origin, DISPGRID_BOUNDARY
 export IdentityTransform, AffineTransform, TransformPair, transform_pair
 export NoDataPolicy, nodata_from
 export chip_size_pixels

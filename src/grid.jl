@@ -191,6 +191,74 @@ function grid_window(g::MapGrid, bounds::Extent)
 end
 
 """
+    DISPGRID_BOUNDARY
+
+The interval, in meters, every ITS_LIVE grid is laid out on: 1920 m. Grid pixel edges sit at
+`x = k * 1920 + DISPGRID_X0` and `y = k * 1920 + DISPGRID_Y0`, and a grid whose spacing divides
+1920 m starts a block of `1920 / spacing` pixels at each of those lines. See `REFERENCE.md`.
+"""
+const DISPGRID_BOUNDARY = 1920.0
+
+# Where the DispGrid boundaries are counted from: half a 15 m pixel left and up of the zero lines, the
+# even-chip shift `dispGrid` applies.
+const DISPGRID_X0 = -7.5
+const DISPGRID_Y0 = 7.5
+
+# `v` as an integer, or a throw naming `what`: a grid off the DispGrid lattice has no nested lattice.
+function _dispgrid_index(v::Float64, what::String)
+    k = round(v)
+    abs(v - k) <= 1e-6 || throw(ArgumentError(
+        what * " is " * string(v) * " grid pixels from the DispGrid origin (x = " * string(DISPGRID_X0) *
+        " m, y = " * string(DISPGRID_Y0) * " m), not a whole number, so the grid is not on the DispGrid " *
+        "lattice"))
+    return Int(k)
+end
+
+# The grid's pixels per DispGrid boundary on each axis, or a throw for a spacing that does not divide it.
+function _dispgrid_block(g::MapGrid)
+    dx, dy = abs(g.geotransform[2]), abs(g.geotransform[6])
+    return (_dispgrid_index(DISPGRID_BOUNDARY / dx, "1920 m over the grid's x spacing of " * string(dx) * " m"),
+            _dispgrid_index(DISPGRID_BOUNDARY / dy, "1920 m over the grid's y spacing of " * string(dy) * " m"))
+end
+
+"""
+    lattice_origin(r::PairGeometry) -> NTuple{2,Int}
+
+The DispGrid index `(column, row)` of the first point of `r`'s window: the grid pixels between its outer
+corner and the DispGrid origin, counted the way the grid's columns and rows run. The same map pixel has
+the same index in every window. Throws for a window off the DispGrid lattice.
+"""
+function lattice_origin end
+
+# Signed by the spacing, so the index grows with the window's own column and row indices.
+_lattice_origin(gt::NTuple{6}) =
+    (_dispgrid_index((gt[1] - DISPGRID_X0) / gt[2], "the window's first column edge"),
+     _dispgrid_index((gt[4] - DISPGRID_Y0) / gt[6], "the window's first row edge"))
+
+"""
+    nested_window(g::MapGrid, bounds::Extent) -> CartesianIndices{2}
+
+The [`grid_window`](@ref) over `bounds`, widened outward to whole [`DISPGRID_BOUNDARY`](@ref) blocks and
+clamped to the grid: its first column and row start on a boundary, and its last ones end just before
+one. Throws for a grid off the DispGrid lattice.
+"""
+function nested_window(g::MapGrid, bounds::Extent)
+    w = grid_window(g, bounds)
+    bx, by = _dispgrid_block(g)
+    ox, oy = _lattice_origin(g.geotransform)   # DispGrid index of grid point 1
+    nx, ny = g.size
+    # One axis: `lo:hi` one-based in the grid, block `b` pixels, grid point 1 at DispGrid index `o`.
+    function widen(lo, hi, b, o, n)
+        a = fld(o + lo - 1, b) * b - o + 1
+        a < 1 && (a += cld(1 - a, b) * b)
+        z = min(cld(o + hi, b) * b - o, n - 1)
+        return a:z
+    end
+    return CartesianIndices((widen(first(w.indices[1]), last(w.indices[1]), bx, ox, nx),
+                             widen(first(w.indices[2]), last(w.indices[2]), by, oy, ny)))
+end
+
+"""
     window_geotransform(g::MapGrid, window::CartesianIndices{2}) -> NTuple{6}
 
 Geotransform of the sub-grid `window` selects, for writing outputs that carry their own
