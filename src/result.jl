@@ -169,6 +169,9 @@ reference_files(g::PairGeometry) = reference_files(g.coordinate)
 
 GeoInterface.crs(r::PairGeometry) = r.crs
 
+# The window's own geotransform carries its position, so the result needs no grid beside it.
+lattice_origin(r::PairGeometry) = _lattice_origin(r.geotransform)
+
 """
     velocity_conversion(g::PairGeometry; coordinate = g.coordinate) -> NamedTuple
 

@@ -521,6 +521,25 @@ from the fixtures on exactly the points they did before. `tools/golden/geogrid_r
 run's `sensing_start` by matching the reference's azimuth indices, so there the offset is absorbed into
 the recovered clock, one pulse earlier than the run's own, and the gates are unchanged.
 
+### Products are computed over windows nested on DispGrid boundaries
+
+`grid_window` reproduces `geogridOptical.cpp:239-244`, which cuts the window wherever the footprint
+starts, and `autoRIFT.py` places each coarser chip level by that window's first point, so two products
+whose footprints overlap measure their coarse levels at different map positions.
+
+The ITS_LIVE grid is laid out by `dispGrid` (`markf6/its_live`, `Gridcorr_v0_py3.py:28-215`, the Python
+port of the MATLAB original): limits snapped to a 1920 m boundary interval (`4 * 32 * 15`, for pyramids of
+chips up to 128 pixels of 15 m), spacings restricted to `15 * [4..256]` m so that grids of different
+spacing align, and pixel edges shifted half a 15 m pixel left and up for an even chip. All 122 ITS_LIVE
+parameter DEMs are 120 m grids on that lattice, with pixel edges at `x = k * 1920 - 7.5 m` and
+`y = k * 1920 + 7.5 m`.
+
+[`nested_window`](@ref) widens the `grid_window` window outward to whole 1920 m blocks, where `dispGrid`
+snaps its limits inward: the points it adds are off the imagery, and inward would drop up to a block of
+coverage per side. [`lattice_origin`](@ref) gives a window's position on the lattice, from which a
+correlator places every coarser lattice on the same map blocks in every product. `grid_window` is
+unchanged, and the golden gates, which compare against the reference's own windows, still use it.
+
 ## Reproduced quirks
 
 These are reference behaviors that look like defects and are matched anyway, because matching the

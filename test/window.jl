@@ -219,3 +219,45 @@ end
     r = pairgeometry(g, pair, GeometryInputs(dem = zeros(size(win))); window = win)
     @test GeoInterface.crs(r) === GeoInterface.crs(g)
 end
+
+@testset "nested windows start and end on DispGrid boundaries" begin
+    # The ITS_LIVE 120 m polar stereographic DEM grid: 16 pixels per DispGrid boundary.
+    grid = MapGrid(geotransform = (-4108807.5, 120.0, 0.0, 4108807.5, 0.0, -120.0), size = (68480, 68480))
+    origin(w) = ImagePairGeometry._lattice_origin(window_geotransform(grid, w))
+    @test origin(CartesianIndices((1:1, 1:1))) == (-34240, -34240)
+
+    # A footprint's window, widened: it contains `grid_window`'s and starts and ends on whole blocks.
+    bounds = Extent(X = (-373507.5, -373507.5 + 2554 * 120), Y = (-2101372.5 - 2175 * 120, -2101372.5))
+    w = grid_window(grid, bounds)
+    n = nested_window(grid, bounds)
+    @test first(n.indices[1]) <= first(w.indices[1]) && last(n.indices[1]) >= last(w.indices[1])
+    @test first(n.indices[2]) <= first(w.indices[2]) && last(n.indices[2]) >= last(w.indices[2])
+    @test all(iszero, mod.(origin(n), 16))
+    @test all(iszero, mod.(size(n), 16))
+
+    # A second footprint's window puts any map pixel at the same DispGrid index: that is what lets every
+    # product's coarser lattices coincide.
+    n2 = nested_window(grid, Extent(X = (-360000.0, -300000.0), Y = (-2200000.0, -2150000.0)))
+    p = (31500, 52000)                          # one map pixel, in grid indices
+    @test origin(n) .+ (p .- first(n).I) == origin(n2) .+ (p .- first(n2).I)
+
+    # Already nested: unchanged. Columns 31169:31184 and rows 51649:51664 are one block each.
+    block = Extent(X = (gridpoint_center(grid, 31169, 1)[1], gridpoint_center(grid, 31184, 1)[1]),
+                   Y = (gridpoint_center(grid, 1, 51664)[2], gridpoint_center(grid, 1, 51649)[2]))
+    @test grid_window(grid, block) == CartesianIndices((31169:31184, 51649:51664))
+    @test nested_window(grid, block) == CartesianIndices((31169:31184, 51649:51664))
+
+    # Clamped to the grid at both ends, as `grid_window` clamps.
+    huge = nested_window(grid, Extent(X = (-1e8, 1e8), Y = (-1e8, 1e8)))
+    @test first(huge).I == (1, 1)
+    @test last(huge).I == (68479, 68479)
+end
+
+@testset "a grid off the DispGrid lattice throws" begin
+    shifted = MapGrid(geotransform = (-4108800.0, 120.0, 0.0, 4108807.5, 0.0, -120.0), size = (100, 100))
+    @test_throws "first column edge is" nested_window(shifted, Extent(X = (-4108000.0, -4107000.0),
+                                                                       Y = (4108000.0, 4108500.0)))
+    odd = MapGrid(geotransform = (-7.5, 100.0, 0.0, 7.5, 0.0, -100.0), size = (100, 100))
+    @test_throws "x spacing of 100.0 m is 19.2 grid pixels" nested_window(
+        odd, Extent(X = (0.0, 500.0), Y = (-500.0, 0.0)))
+end
