@@ -141,9 +141,7 @@ The antenna steering rate is degrees per second in the annotation and radians pe
 so the conversion happens here.
 """
 function ImagePairGeometry.TOPSCarrier(d::SLCDatasets.DerampParameters, orbit::Orbit; epoch)
-    # `epoch` is a `DateTime`, but this extension may not name `Dates` as a dependency — an extension sees
-    # only its parent's — so the type is left to `UtcTime`'s own constructor to enforce.
-    t_mid = SLCDatasets.seconds_between(SLCDatasets.UtcTime(epoch, 0.0), d.burst_mid)
+    t_mid = SLCDatasets.seconds_between(epoch, d.burst_mid)
     _, v = ImagePairGeometry.interpolate(orbit, t_mid)
     vs = sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3])
 
